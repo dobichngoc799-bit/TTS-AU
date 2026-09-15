@@ -1,0 +1,130 @@
+// Types shared between main and renderer. Keep this file free of Node/DOM-specific
+// imports so it type-checks under both tsconfig.node.json and tsconfig.web.json.
+
+export interface GenvoiceAccount {
+  id: string
+  email: string
+  name: string
+  avatar_url: string
+  credit_balance: number
+  role: string
+  tenant_id: string
+}
+
+export interface GenvoiceModel {
+  model_id: string
+  name: string
+  description: string
+  can_do_text_to_speech: boolean
+  can_do_voice_conversion: boolean
+  can_use_style: boolean
+  can_use_speaker_boost: boolean
+  can_be_finetuned: boolean
+  [key: string]: unknown
+}
+
+export interface GenvoiceLanguage {
+  code: string
+  name: string
+}
+
+export type VoiceEngine = 'elevenlabs' | 'minimax' | 'capcut'
+
+export interface GenvoiceVoice {
+  voice_id: string
+  name: string
+  description?: string
+  engine: VoiceEngine
+  previewUrl?: string
+}
+
+// Mirrors ElevenLabs voice_settings naming. ASSUMPTION: chưa xác nhận GenVoice
+// có nhận field này trong body POST /v1/text-to-speech/{voiceId} hay không.
+export interface VoiceSettings {
+  stability: number // 0-100 in UI, gửi lên dạng 0-1
+  similarity_boost: number // 0-100 in UI, gửi lên dạng 0-1
+  style: number // 0-100 in UI, gửi lên dạng 0-1
+  use_speaker_boost: boolean
+  speed: number // 0.7 - 1.2 (ElevenLabs range), mặc định 1.0
+}
+
+export type TtsTaskStatus = 'pending' | 'processing' | 'completed' | 'failed' | string
+
+// Khớp response thật của GET /v1/history/{id} — xem CLAUDE.md mục 2.3
+export interface GenvoiceTask {
+  id: string
+  user_id: string
+  status: TtsTaskStatus
+  progress: number
+  provider: VoiceEngine
+  text: string
+  voice_id: string
+  model_id: string
+  name: string
+  metadata: {
+    language_code: string
+    export_transcript: boolean
+    voice_name: string
+  }
+  result: { audio_url: string } | null
+  characters_used: number
+  credits_deducted: number
+  error: string | null
+  detail_error: string | null
+  created_at: string
+  updated_at: string
+}
+
+export type JobItemStatus =
+  | 'pending'
+  | 'submitting'
+  | 'queued_on_server'
+  | 'polling'
+  | 'done'
+  | 'error'
+  | 'skipped'
+
+export interface JobItem {
+  id: string
+  index: number
+  sourceText: string
+  status: JobItemStatus
+  taskId?: string
+  outputAudioPath?: string
+  errorMessage?: string
+  durationMs?: number
+  creditsDeducted?: number
+}
+
+export interface BatchJobConfig {
+  voiceId: string
+  modelId: string
+  languageCode: string
+  voiceSettingsEnabled: boolean
+  voiceSettings: VoiceSettings
+  items: { id: string; index: number; sourceText: string }[]
+  outputDir: string
+  autoGenerateSrt: boolean
+  joinAudio: boolean
+}
+
+export interface BatchProgressEvent {
+  jobId: string
+  items: JobItem[]
+  done: number
+  processing: number
+  total: number
+  elapsedMs: number
+  finished: boolean
+  stopped: boolean
+}
+
+export const DEFAULT_VOICE_SETTINGS: VoiceSettings = {
+  stability: 50,
+  similarity_boost: 75,
+  style: 0,
+  use_speaker_boost: true,
+  speed: 1.0
+}
+
+export const DEFAULT_AUTO_SPLIT_DELIMITERS = '.,;:!?'
