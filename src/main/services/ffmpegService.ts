@@ -2,8 +2,20 @@ import { spawn } from 'child_process'
 import { promises as fs } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
-import ffmpegPath from 'ffmpeg-static'
+import { app } from 'electron'
+import ffmpegPathRaw from 'ffmpeg-static'
 import ffprobeStatic from 'ffprobe-static'
+
+// ffmpeg-static/ffprobe-static trả về path bên trong app.asar khi build
+// production — asar là archive nên binary không chạy trực tiếp từ đó được.
+// electron-builder.yml đã cấu hình asarUnpack cho 2 package này (giải nén
+// ra app.asar.unpacked cạnh app.asar), nên chỉ cần thay chuỗi path tương ứng.
+function unpackAsarPath(p: string): string {
+  return app.isPackaged ? p.replace('app.asar', 'app.asar.unpacked') : p
+}
+
+const ffmpegPath = unpackAsarPath(ffmpegPathRaw as string)
+const ffprobePath = unpackAsarPath(ffprobeStatic.path)
 
 function run(bin: string, args: string[]): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -22,7 +34,7 @@ function run(bin: string, args: string[]): Promise<string> {
 
 // Trả về duration (ms) của 1 file audio bằng ffprobe.
 export async function getAudioDurationMs(filePath: string): Promise<number> {
-  const out = await run(ffprobeStatic.path, [
+  const out = await run(ffprobePath, [
     '-v',
     'error',
     '-show_entries',
@@ -47,7 +59,7 @@ export async function joinMp3Files(inputPaths: string[], outputPath: string): Pr
   await fs.writeFile(listFile, listContent, 'utf-8')
 
   try {
-    await run(ffmpegPath as string, [
+    await run(ffmpegPath, [
       '-y',
       '-f',
       'concat',

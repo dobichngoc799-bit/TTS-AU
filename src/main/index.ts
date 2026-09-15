@@ -1,5 +1,5 @@
 import { app, shell, BrowserWindow, ipcMain, dialog } from 'electron'
-import { join } from 'path'
+import { join, dirname, basename } from 'path'
 import { promises as fs } from 'fs'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
@@ -8,7 +8,22 @@ import * as secureStore from './services/secureStore'
 import { initAutoUpdater } from './services/updateService'
 import { autoSplitText, extractLinesFromFileContent } from './services/textSplitter'
 import { BatchJobRunner } from './queue/batchJobQueue'
-import type { BatchJobConfig } from '../shared/types'
+import type { BatchJobConfig, ImportedFileGroup } from '../shared/types'
+
+// Đọc 1 file import + tính sẵn outputDir (folder mới cùng tên, cạnh file gốc)
+// và outputBaseName (tên file không đuôi) — xem ImportedFileGroup.
+async function readImportedFileGroup(filePath: string): Promise<ImportedFileGroup> {
+  const ext = filePath.slice(filePath.lastIndexOf('.'))
+  const content = await fs.readFile(filePath, 'utf-8')
+  const base = basename(filePath, ext)
+  return {
+    filePath,
+    ext,
+    content,
+    outputDir: join(dirname(filePath), base),
+    outputBaseName: base
+  }
+}
 
 let mainWindow: BrowserWindow | null = null
 let activeRunner: BatchJobRunner | null = null
@@ -17,6 +32,8 @@ function createWindow(): void {
   mainWindow = new BrowserWindow({
     width: 1100,
     height: 780,
+    resizable: false,
+    maximizable: false,
     show: false,
     autoHideMenuBar: true,
     ...(process.platform === 'linux' ? { icon } : {}),
@@ -74,36 +91,41 @@ function registerIpcHandlers(): void {
     return result.filePaths[0]
   })
 
-  ipcMain.handle('dialog:importFiles', async () => {
+  // Import 1 hay nhiều file: mỗi file trả về 1 "group" riêng, main process tự
+  // tính sẵn outputDir = folder mới cùng tên file (không đuôi), tạo CẠNH file
+  // gốc — theo yêu cầu "add file txt vào thì tự tạo folder + đổi tên audio
+  // giống tên file". Không tự split ở đây — trả nguyên `content` để renderer
+  // quyết định tách theo Auto Split đang bật/tắt (giống cách xử lý text gõ tay).
+  ipcMain.handle('dialog:importFiles', async (): Promise<ImportedFileGroup[]> => {
     const result = await dialog.showOpenDialog({
       properties: ['openFile', 'multiSelections'],
       filters: [{ name: 'Text / Subtitles', extensions: ['txt', 'srt', 'dgt'] }]
     })
     if (result.canceled) return []
-    const lines: string[] = []
-    for (const filePath of result.filePaths) {
-      const ext = filePath.slice(filePath.lastIndexOf('.'))
-      const content = await fs.readFile(filePath, 'utf-8')
-      lines.push(...extractLinesFromFileContent(content, ext))
-    }
-    return lines
+    return Promise.all(result.filePaths.map((filePath) => readImportedFileGroup(filePath)))
   })
 
-  ipcMain.handle('dialog:importFolder', async () => {
+  ipcMain.handle('dialog:importFolder', async (): Promise<ImportedFileGroup[]> => {
     const result = await dialog.showOpenDialog({ properties: ['openDirectory'] })
     if (result.canceled || result.filePaths.length === 0) return []
     const dir = result.filePaths[0]
     const entries = await fs.readdir(dir, { withFileTypes: true })
-    const lines: string[] = []
+    const groups: ImportedFileGroup[] = []
     for (const entry of entries) {
       if (!entry.isFile()) continue
       const ext = entry.name.slice(entry.name.lastIndexOf('.'))
       if (!['.txt', '.srt', '.dgt'].includes(ext)) continue
-      const content = await fs.readFile(join(dir, entry.name), 'utf-8')
-      lines.push(...extractLinesFromFileContent(content, ext))
+      groups.push(await readImportedFileGroup(join(dir, entry.name)))
     }
-    return lines
+    return groups
   })
+
+  // Dùng khi Auto Split TẮT (hoặc cho .srt — luôn tách theo block phụ đề gốc,
+  // không áp Auto Split lên trên): trả lại đúng cách tách "mỗi dòng/1 block =
+  // 1 đoạn" như cũ, không qua autoSplitText.
+  ipcMain.handle('text:extractLines', (_e, content: string, ext: string) =>
+    extractLinesFromFileContent(content, ext)
+  )
 
   ipcMain.handle('shell:openPath', async (_e, path: string) => {
     await shell.openPath(path)

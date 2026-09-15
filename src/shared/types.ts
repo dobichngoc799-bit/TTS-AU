@@ -86,6 +86,7 @@ export type JobItemStatus =
 
 export interface JobItem {
   id: string
+  groupId: string
   index: number
   sourceText: string
   status: JobItemStatus
@@ -96,16 +97,39 @@ export interface JobItem {
   creditsDeducted?: number
 }
 
+// 1 group = 1 "nguồn" audio sẽ ghép + đặt tên chung: hoặc văn bản gõ tay (dùng
+// "Thư mục output" đã chọn, tên mặc định "joined"), hoặc 1 file import (dùng
+// folder cùng tên tạo cạnh file gốc — xem CLAUDE.md mục "Import file → tự tạo
+// folder + đặt tên theo file gốc").
+export interface BatchGroup {
+  id: string
+  outputDir: string
+  outputBaseName: string
+}
+
 export interface BatchJobConfig {
   voiceId: string
   modelId: string
   languageCode: string
   voiceSettingsEnabled: boolean
   voiceSettings: VoiceSettings
-  items: { id: string; index: number; sourceText: string }[]
-  outputDir: string
+  groups: BatchGroup[]
+  items: { id: string; groupId: string; index: number; sourceText: string }[]
   autoGenerateSrt: boolean
   joinAudio: boolean
+}
+
+// Kết quả main process trả về khi import 1 file (.txt/.srt/.dgt) — main process
+// tự tính sẵn outputDir (folder mới cùng tên, cạnh file gốc) + outputBaseName
+// (tên file gốc không kèm đuôi) vì đây là logic path/fs, không nên làm ở
+// renderer. `content`/`ext` để renderer tự quyết định cách tách đoạn (theo
+// Auto Split hiện tại của user) thay vì cố định lúc import.
+export interface ImportedFileGroup {
+  filePath: string
+  ext: string
+  content: string
+  outputDir: string
+  outputBaseName: string
 }
 
 export interface BatchProgressEvent {
@@ -123,7 +147,7 @@ export const DEFAULT_VOICE_SETTINGS: VoiceSettings = {
   stability: 50,
   similarity_boost: 75,
   style: 0,
-  use_speaker_boost: true,
+  use_speaker_boost: false,
   speed: 1.0
 }
 

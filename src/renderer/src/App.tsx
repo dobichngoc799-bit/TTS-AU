@@ -14,9 +14,9 @@ function App(): React.JSX.Element {
   }, [init])
 
   return (
-    <div className="flex h-full w-full flex-col bg-gray-100">
+    <div className="flex h-full w-full flex-col bg-[#eef0f4]">
       <ApiKeyBar />
-      <div className="flex flex-1 flex-col gap-3 overflow-hidden p-3">
+      <div className="flex flex-1 flex-col gap-2 overflow-y-auto p-2.5">
         <VoicePanel />
         <BatchJobPanel />
         <JobQueueTable />

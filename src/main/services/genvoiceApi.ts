@@ -109,7 +109,7 @@ export interface SubmitTtsParams {
   text: string
   modelId: string
   languageCode: string
-  voiceSettings?: VoiceSettings // ASSUMPTION: chưa xác nhận server có nhận field này
+  voiceSettings?: VoiceSettings
 }
 
 // POST /v1/text-to-speech/{voiceId} — CONFIRMED, trả 202 { id, status: 'pending' }
@@ -122,8 +122,9 @@ export async function submitTextToSpeech(
     model_id: params.modelId,
     language_code: params.languageCode
   }
-  // ASSUMPTION: chưa test server có áp dụng voice_settings không — gửi kèm
-  // theo convention ElevenLabs, cần verify bằng cách so sánh audio output.
+  // CONFIRMED 2026-09-15: server có áp dụng voice_settings thật — test với
+  // speed=0.7 cho cùng 1 đoạn text, duration audio tăng từ 5.64s lên 7.97s
+  // (tỉ lệ ~1.41, khớp gần đúng với 1/0.7 ≈ 1.43). Xem CLAUDE.md mục 6.
   if (params.voiceSettings) {
     body.voice_settings = {
       stability: params.voiceSettings.stability / 100,

@@ -10,53 +10,75 @@ const STATUS_LABEL: Record<string, string> = {
   skipped: 'Đã bỏ qua'
 }
 
-const STATUS_COLOR: Record<string, string> = {
-  pending: 'text-gray-400',
-  submitting: 'text-blue-500',
-  polling: 'text-blue-500',
-  queued_on_server: 'text-blue-500',
-  done: 'text-emerald-600',
-  error: 'text-red-500',
-  skipped: 'text-gray-400'
+const STATUS_BADGE: Record<string, string> = {
+  pending: 'bg-gray-100 text-gray-500',
+  submitting: 'bg-blue-50 text-blue-600',
+  polling: 'bg-blue-50 text-blue-600',
+  queued_on_server: 'bg-blue-50 text-blue-600',
+  done: 'bg-emerald-50 text-emerald-600',
+  error: 'bg-red-50 text-red-600',
+  skipped: 'bg-gray-100 text-gray-500'
 }
 
 export function JobQueueTable(): React.JSX.Element {
   const { items, done, processing, total, elapsedMs } = useJobStore()
+  const progressPct = total > 0 ? Math.round((done / total) * 100) : 0
 
   return (
-    <section className="flex flex-1 flex-col overflow-hidden rounded border border-gray-200 bg-white">
-      <div className="border-b border-gray-100 px-4 py-2 text-sm text-gray-600">
-        Subtitles (Done: {done} Processing: {processing} Total: {total}) Elapsed:{' '}
-        {Math.round(elapsedMs / 1000)}s
+    <section className="flex min-h-[160px] flex-1 flex-col overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm">
+      <div className="flex items-center gap-3 border-b border-gray-100 px-4 py-2">
+        <span className="h-4 w-1 rounded-full bg-indigo-500" />
+        <h2 className="text-sm font-semibold text-gray-800">Subtitles</h2>
+        <div className="h-1.5 w-28 overflow-hidden rounded-full bg-gray-100">
+          <div
+            className="h-full rounded-full bg-indigo-500 transition-[width]"
+            style={{ width: `${progressPct}%` }}
+          />
+        </div>
+        <span className="text-xs text-gray-500">
+          Done: <span className="font-medium text-gray-700">{done}</span> · Processing:{' '}
+          <span className="font-medium text-gray-700">{processing}</span> · Total:{' '}
+          <span className="font-medium text-gray-700">{total}</span>
+        </span>
+        <span className="ml-auto text-xs text-gray-400">
+          Elapsed: {Math.round(elapsedMs / 1000)}s
+        </span>
       </div>
       <div className="flex-1 overflow-y-auto">
         <table className="w-full text-left text-sm">
-          <thead className="sticky top-0 bg-gray-50 text-xs text-gray-500">
+          <thead className="sticky top-0 bg-gray-50 text-xs font-medium tracking-wide text-gray-500 uppercase">
             <tr>
-              <th className="px-3 py-2">#</th>
-              <th className="px-3 py-2">Text</th>
-              <th className="px-3 py-2">Status</th>
-              <th className="px-3 py-2">Credits</th>
-              <th className="px-3 py-2">Lỗi</th>
+              <th className="w-12 px-4 py-2.5 font-medium">#</th>
+              <th className="px-4 py-2.5 font-medium">Text</th>
+              <th className="w-36 px-4 py-2.5 font-medium">Status</th>
+              <th className="w-24 px-4 py-2.5 font-medium">Credits</th>
+              <th className="px-4 py-2.5 font-medium">Lỗi</th>
             </tr>
           </thead>
           <tbody>
-            {items.map((item) => (
-              <tr key={item.id} className="border-t border-gray-100">
-                <td className="px-3 py-1.5 text-gray-400">{item.index + 1}</td>
-                <td className="max-w-md truncate px-3 py-1.5">{item.sourceText}</td>
-                <td className={`px-3 py-1.5 font-medium ${STATUS_COLOR[item.status] ?? ''}`}>
-                  {STATUS_LABEL[item.status] ?? item.status}
+            {items.map((item, i) => (
+              <tr
+                key={item.id}
+                className={`border-t border-gray-100 ${i % 2 === 1 ? 'bg-gray-50/50' : ''}`}
+              >
+                <td className="px-4 py-3 text-gray-400">{item.index + 1}</td>
+                <td className="px-4 py-3 leading-relaxed text-gray-700">{item.sourceText}</td>
+                <td className="px-4 py-3">
+                  <span
+                    className={`inline-flex items-center rounded-full px-2.5 py-1 text-xs font-medium ${STATUS_BADGE[item.status] ?? 'bg-gray-100 text-gray-500'}`}
+                  >
+                    {STATUS_LABEL[item.status] ?? item.status}
+                  </span>
                 </td>
-                <td className="px-3 py-1.5 text-gray-500">{item.creditsDeducted ?? '-'}</td>
-                <td className="max-w-xs truncate px-3 py-1.5 text-red-500">
-                  {item.errorMessage ?? ''}
+                <td className="px-4 py-3 text-gray-500 tabular-nums">
+                  {item.creditsDeducted ?? '–'}
                 </td>
+                <td className="max-w-xs px-4 py-3 text-red-500">{item.errorMessage ?? ''}</td>
               </tr>
             ))}
             {items.length === 0 && (
               <tr>
-                <td colSpan={5} className="px-3 py-6 text-center text-gray-400">
+                <td colSpan={5} className="px-4 py-3 text-center text-sm text-gray-400">
                   Chưa có job nào — nhập text và bấm Start.
                 </td>
               </tr>

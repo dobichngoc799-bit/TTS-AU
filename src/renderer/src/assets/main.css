@@ -2,6 +2,13 @@
 
 :root {
   color-scheme: light;
+  --accent: #4f46e5;
+  --accent-hover: #4338ca;
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #cbd5e1 transparent;
 }
 
 body {
@@ -12,12 +19,53 @@ body {
     'Segoe UI',
     Roboto,
     sans-serif;
-  background: #f4f5f7;
-  color: #1f2328;
+  background: #eef0f4;
+  color: #1e2130;
+  font-feature-settings: 'tnum';
 }
 
 #root {
   height: 100vh;
   width: 100vw;
   overflow: hidden;
+}
+
+/* Checkbox / radio dùng accent-color chung cho đồng bộ màu, thay vì màu
+   mặc định xanh dương nhạt của trình duyệt lẫn lộn với các màu khác. */
+input[type='checkbox'],
+input[type='radio'] {
+  accent-color: var(--accent);
+}
+
+/* Range slider: trình duyệt mặc định rất xấu và không đồng bộ Windows/macOS
+   — tự vẽ track + thumb để trông giống nhau trên mọi hệ điều hành. */
+input[type='range'] {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 4px;
+  border-radius: 999px;
+  background: #e2e8f0;
+  outline: none;
+  cursor: pointer;
+}
+input[type='range']::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 999px;
+  background: var(--accent);
+  border: 2px solid white;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
+  cursor: pointer;
+}
+input[type='range']::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border-radius: 999px;
+  background: var(--accent);
+  border: 2px solid white;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
+  cursor: pointer;
 }

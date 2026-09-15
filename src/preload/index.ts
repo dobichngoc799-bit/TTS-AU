@@ -1,6 +1,11 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import { electronAPI } from '@electron-toolkit/preload'
-import type { BatchJobConfig, BatchProgressEvent, GenvoiceVoice } from '../shared/types'
+import type {
+  BatchJobConfig,
+  BatchProgressEvent,
+  GenvoiceVoice,
+  ImportedFileGroup
+} from '../shared/types'
 
 export interface ListSharedVoicesParams {
   search?: string
@@ -32,15 +37,17 @@ const api = {
   },
   dialog: {
     selectOutputDir: (): Promise<string | null> => ipcRenderer.invoke('dialog:selectOutputDir'),
-    importFiles: (): Promise<string[]> => ipcRenderer.invoke('dialog:importFiles'),
-    importFolder: (): Promise<string[]> => ipcRenderer.invoke('dialog:importFolder')
+    importFiles: (): Promise<ImportedFileGroup[]> => ipcRenderer.invoke('dialog:importFiles'),
+    importFolder: (): Promise<ImportedFileGroup[]> => ipcRenderer.invoke('dialog:importFolder')
   },
   shell: {
     openPath: (path: string): Promise<void> => ipcRenderer.invoke('shell:openPath', path)
   },
   text: {
     autoSplit: (text: string, delimiters: string): Promise<string[]> =>
-      ipcRenderer.invoke('text:autoSplit', text, delimiters)
+      ipcRenderer.invoke('text:autoSplit', text, delimiters),
+    extractLines: (content: string, ext: string): Promise<string[]> =>
+      ipcRenderer.invoke('text:extractLines', content, ext)
   },
   batchJob: {
     start: (apiKey: string, job: BatchJobConfig): Promise<void> =>

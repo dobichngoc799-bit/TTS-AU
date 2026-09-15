@@ -6,19 +6,24 @@ Xây dựng một desktop app tạo audio (Text-to-Speech) bằng cách gọi AP
 [GenVoice](https://genvoice.pro) — dịch vụ bán credit cho phép gọi TTS qua
 nhiều backend (ElevenLabs, MiniMax, CapCut...). App được thiết kế lại dựa trên
 app tham khảo **"Dani Media Auto TTS Subtitles (evlabs) 5.10"** (Windows
-WinForms) nhưng build mới hoàn toàn bằng **Electron + React + TypeScript** để
-chạy được trên macOS (máy dev hiện tại) và Windows.
+WinForms) nhưng build mới hoàn toàn bằng **Electron + React + TypeScript**.
+Dev ban đầu trên macOS, hiện đang phát triển tiếp trên **Windows** (máy dev
+hiện tại) — xem mục 5 về khác biệt môi trường giữa 2 máy.
 
 Đây không phải là port 1:1 — ta giữ lại đúng workflow (chọn giọng → batch job
 → tạo audio hàng loạt → ghép file → xuất SRT) nhưng xây trên stack hiện đại.
+
+**Trạng thái tổng quan (2026-09-15):** MVP đã hoạt động end-to-end thật với
+credit thật trên Windows (generate audio, Auto Split, Join Mp3, import file
+tự tạo folder riêng, chạy song song 4 luồng), UI đã redesign, đã build ra
+bản cài đặt Windows (`.exe`) chạy được. Xem mục 10 cho danh sách việc còn lại.
 
 ## 2. GenVoice API — đã xác nhận bằng request thật
 
 Trang `https://genvoice.pro/docs` là SPA (React) chỉ hiển thị đầy đủ khi có
 JS render + login, nên không lấy được bằng cách fetch HTML thông thường. Đã
 xác nhận toàn bộ thông tin dưới đây bằng cách gọi thật vào API với API key
-của user (kể cả 1 request `POST text-to-speech` thật để lấy đúng schema —
-đã trừ 28 credit trong tổng ~301,000 credit).
+của user.
 
 ### 2.1 Kết nối & xác thực (CONFIRMED)
 - **Base URL:** `https://api.genvoice.pro`
@@ -26,7 +31,8 @@ của user (kể cả 1 request `POST text-to-speech` thật để lấy đúng 
   gốc — GenVoice giữ nguyên convention này).
 - **Rate limit:** có header `x-ratelimit-limit` / `x-ratelimit-remaining` /
   `x-ratelimit-reset` trên mọi response (quan sát được limit ~2000, reset
-  tính theo giây — cần theo dõi thực tế thêm, không hard-code con số này).
+  tính theo giây). `batchJobQueue.ts` chạy `CONCURRENCY=4` song song — an
+  toàn so với mức này (xem mục 8).
 - API key là bí mật của tài khoản (không phải mã dùng chung) — **không bao
   giờ** commit key vào git hay ghi log ra file, chỉ lưu qua OS keychain
   (xem mục 9).
@@ -39,16 +45,16 @@ của user (kể cả 1 request `POST text-to-speech` thật để lấy đúng 
 | GET | `/v1/models` | Danh sách model (schema y hệt ElevenLabs `/v1/models`: `model_id`, `name`, `can_do_text_to_speech`, `can_use_style`, `can_use_speaker_boost`...) | |
 | GET | `/v1/languages` | Danh sách `{code, name}` | |
 | GET | `/v1/default-voices` | Danh sách voice mặc định của ElevenLabs, field `voices: [{voice_id, name, description, ...}]` | |
-| GET | `/v1/shared-voices` | Danh sách voice cộng đồng ElevenLabs (rất lớn, ~370KB JSON) — nên cache local, không fetch mỗi lần mở app | |
+| GET | `/v1/shared-voices` | Danh sách voice cộng đồng ElevenLabs, có phân trang thật (`has_more`, `page`/`page_size` tối đa 100) + `search` server-side theo cả tên lẫn voice_id | Không tải hết về rồi lọc client — luôn truyền `search` khi user gõ tìm |
 | GET | `/v1/minimax/voices` | Danh sách voice MiniMax, field `voices: []` | Tài khoản test chưa có voice nào |
-| **POST** | `/v1/text-to-speech/{voice_id}` | **Tạo audio (endpoint chính)** | Body: `{ "text": string, "model_id": string, "language_code": string }`. Trả **202 Accepted** ngay: `{ "id": "<task_id>", "status": "pending" }` — **đây là API bất đồng bộ (async/polling), KHÔNG trả file luôn.** `language_code` là bắt buộc và server validate theo model (vd. `eleven_multilingual_v2` không chấp nhận `"vi"` trong lần test — cần dò danh sách code hợp lệ theo từng model trước khi cho user chọn) |
+| **POST** | `/v1/text-to-speech/{voice_id}` | **Tạo audio (endpoint chính)** | Body: `{ text, model_id, language_code, voice_settings? }`. Trả **202 Accepted** ngay: `{ id, status: "pending" }` — API bất đồng bộ (polling), KHÔNG trả file luôn. `language_code` bắt buộc, server validate theo model. `voice_settings` — xem mục 2.3, CONFIRMED server có áp dụng |
 | GET | `/v1/history/{id}` | Poll trạng thái 1 task (dùng chung cho text-to-speech, voice-changer, speech-to-text) | Response đầy đủ: xem mục 2.3 |
 | GET | `/v1/history` | List tất cả task của user (`?type=...` có vẻ được chấp nhận nhưng chưa xác nhận hết giá trị hợp lệ) | Trả `{has_more, tasks: [...]}` |
 | GET | `/v1/aidubbing/history` , `/v1/aidubbing/history/{id}` | List/detail task Dubbing | Dubbing dùng resource path RIÊNG, không chung với `/v1/history` |
 | DELETE | `/v1/aidubbing/history/{id}` | Xoá task dubbing | Auth: `xi-api-key` |
 | GET | `/v1/speech-to-text` | List task speech-to-text | |
 | GET | `/v1/voice-changer/history` | List task voice changer | |
-| GET | `/v1/api-keys` | Quản lý API key | Trả `401 {"error":"missing or invalid authorization token"}` khi dùng chính `xi-api-key` để gọi — endpoint này cần cơ chế auth khác (session/JWT của web app), **không tự quản lý API key được từ desktop app bằng chính API key đó** |
+| GET | `/v1/api-keys` | Quản lý API key | Trả `401` khi dùng `xi-api-key` để gọi — cần auth khác (session/JWT web app), không tự quản lý API key được từ desktop app |
 
 ### 2.3 Response mẫu `GET /v1/history/{id}` khi task hoàn tất (CONFIRMED)
 
@@ -79,40 +85,38 @@ của user (kể cả 1 request `POST text-to-speech` thật để lấy đúng 
 ```
 
 - `status` quan sát được: `pending` → (khả năng có `processing`, chưa thấy) →
-  `completed` (khả năng có `failed`/`error`, chưa thấy — cần code phòng thủ
+  `completed` (khả năng có `failed`/`error`, chưa thấy — code đã phòng thủ
   cho mọi giá trị lạ, đừng chỉ handle `completed`).
-- `result.audio_url` là URL **public, không cần API key** để tải
-  (`GET` trực tiếp trả `audio/mpeg`), `cache-control: public, max-age=172800`
-  → **file tồn tại tối đa 48 giờ trên server GenVoice**, app PHẢI tự tải về
-  máy ngay khi `status: completed`, không được coi `audio_url` là chỗ lưu
-  lâu dài.
-- Với provider `elevenlabs`: **1 ký tự văn bản = 1 credit** (`characters_used
-  == credits_deducted` trong test). Chưa xác nhận tỉ lệ này có giữ nguyên
-  cho MiniMax/CapCut hay không — không giả định giống nhau, đọc field
-  `credits_deducted` thật từ response thay vì tự tính trước.
+- `result.audio_url` là URL **public, không cần API key** để tải,
+  `cache-control: public, max-age=172800` → **file tồn tại tối đa 48 giờ
+  trên server GenVoice**, app PHẢI tự tải về máy ngay khi `status:
+  completed` (đã implement trong `batchJobQueue.ts`).
+- Với provider `elevenlabs`: **1 ký tự văn bản = 1 credit**
+  (`characters_used == credits_deducted`) — verify nhiều lần với credit
+  thật (vd. đoạn 70 ký tự → trừ đúng 70 credit). Chưa xác nhận tỉ lệ này
+  cho MiniMax/CapCut — luôn đọc `credits_deducted` thật từ response thay vì
+  tự tính trước.
+- `voice_settings` trong body POST **CONFIRMED server có áp dụng thật**
+  (2026-09-15): test speed=0.7 trên cùng 1 đoạn text, duration audio tăng
+  từ 5.64s → 7.97s (tỉ lệ ~1.41, khớp gần đúng 1/0.7≈1.43).
 
 ### 2.4 Chưa xác nhận (không đoán, hỏi lại hoặc dò thêm khi cần)
 - Path chính xác của "Retry task" / "Delete history" cho text-to-speech
-  (đoán theo pattern `/v1/history/{id}` DELETE — cần test riêng, hiện chưa
-  gọi vì là thao tác ghi/xoá).
-- Danh sách `language_code` hợp lệ theo từng `model_id` (server validate
-  server-side — nên gọi thử hoặc tìm trong response `/v1/models` xem có field
-  liệt kê ngôn ngữ hỗ trợ không, tránh hard-code danh sách).
-- Endpoint tạo audio cho MiniMax/CapCut (khả năng có path riêng như
-  `/v1/minimax/text-to-speech/{voice_id}` — chưa test, không giả định).
-  Voice Changer, Dialogue, Speech-to-text: có category riêng trong docs
-  nhưng chưa test request body.
-- Cách đăng ký/lấy API key mới qua API (mục `/v1/api-keys` cần auth khác,
-  không quan trọng cho MVP vì user tự copy key có sẵn vào app).
-- Giới hạn độ dài `text` mỗi request (ElevenLabs gốc giới hạn ~5000 ký tự
-  tuỳ plan — cần test hoặc đọc lỗi trả về khi vượt).
+  (chưa test, chưa có nút retry/xoá per-item trong UI).
+- Danh sách `language_code` hợp lệ theo từng `model_id`.
+- Endpoint tạo audio cho MiniMax/CapCut (`submitTextToSpeech` hiện chỉ test
+  với ElevenLabs) — path/body có thể khác. Voice Changer, Dialogue,
+  Speech-to-text: chưa test request body.
+- Response thật khi credit không đủ (HTTP status + body).
+- Response thật khi `status: failed` xảy ra (chưa quan sát được lần nào).
+- Giới hạn độ dài `text` mỗi request (ElevenLabs gốc ~5000 ký tự tuỳ plan).
+- Cách đăng ký/lấy API key mới qua API — không quan trọng cho MVP.
 
 **Quy tắc làm việc:** khi cần các phần "chưa xác nhận" ở trên, KHÔNG bịa
-schema rồi code cứng. Cô lập toàn bộ logic gọi GenVoice API trong một lớp
-duy nhất (`electron/services/genvoiceApi.ts`) để khi cần sửa/bổ sung theo
-kết quả test thật, chỉ sửa một chỗ. Đánh dấu rõ trong code
-(`// ASSUMPTION: chưa test thật`) ở bất kỳ chỗ nào dựa trên suy đoán thay vì
-response đã xác nhận ở trên.
+schema rồi code cứng. Cô lập toàn bộ logic gọi GenVoice API trong
+`src/main/services/genvoiceApi.ts` để khi cần sửa/bổ sung theo kết quả test
+thật, chỉ sửa một chỗ. Đánh dấu rõ trong code (`// ASSUMPTION`) ở bất kỳ chỗ
+nào dựa trên suy đoán thay vì response đã xác nhận ở trên.
 
 ## 3. Phân tích app tham khảo (Dani Media Auto TTS Subtitles 5.10)
 
@@ -120,254 +124,264 @@ Từ ảnh chụp UI, đây là một **batch TTS tool** với các cụm chức
 
 ### 3.1 Voice (chọn & cấu hình giọng đọc)
 - Search giọng theo tên (`Name` + nút `Search`).
-- Dropdown chọn `Voice` cụ thể.
-- Dropdown chọn `Model` (VD: `eleven_multilingual_v2` — đúng model id của
-  ElevenLabs, xác nhận backend là ElevenLabs-compatible).
-- Dropdown chọn `Language` (mặc định `Auto`).
-- Nút `+ Add to Library` — lưu giọng đang chọn vào thư viện cá nhân (local).
-- Nút `Library (Vip+)` — mở thư viện giọng đã lưu (tính năng trả phí/VIP
-  trong app gốc — với app của ta, không cần phân biệt VIP vì user tự trả
-  credit trực tiếp cho GenVoice).
+- Dropdown chọn `Voice`, `Model` (VD: `eleven_multilingual_v2`), `Language`.
+- Nút `+ Add to Library` / `Library (Vip+)` — không cần phân biệt VIP ở app
+  mới vì user tự trả credit trực tiếp cho GenVoice.
 
 ### 3.2 Change voice settings (checkbox bật/tắt override)
-Các tham số này **trùng khớp chính xác** với `voice_settings` của ElevenLabs
-API — cần map 1:1 khi biết được GenVoice có proxy nguyên schema này không:
-- `Speed` (số thực, mặc định 1.00)
-- `Style` (%, mặc định 0)
-- `Stability` (%, mặc định 50)
-- `Similarity` (%, mặc định 75)
-- `Speaker Boost` (checkbox, mặc định bật)
-- Nút `Reset` về mặc định.
+Trùng khớp `voice_settings` của ElevenLabs API: `Speed` (0.7–1.2, mặc định
+1.0), `Style` (%, mặc định 0), `Stability` (%, mặc định 50), `Similarity`
+(%, mặc định 75), `Speaker Boost` (checkbox), nút `Reset`.
 
 ### 3.3 Proxy
-- Dropdown chọn proxy (`FREE` / custom) + nút `Load`.
-- **Đánh giá:** trong app gốc tính năng này dùng để né rate-limit khi gọi
-  thẳng ElevenLabs qua nhiều tài khoản free. Với app mới gọi qua GenVoice
-  (dịch vụ trả phí, có API key riêng), tính năng proxy **không cần thiết ở
-  bản đầu** — đưa vào backlog, không phải core feature.
+Dùng để né rate-limit khi gọi thẳng ElevenLabs qua nhiều tài khoản free —
+**không cần thiết** với app mới (gọi qua GenVoice, key riêng). Backlog.
 
-### 3.4 Batch Job (chức năng lõi của cả app)
-- Chọn thư mục input (`Thư mục` + nút `...`).
-- Checkbox `Tự động tạo Srt` — tự sinh phụ đề khớp thời gian audio.
-- Nút `Chạy hàng loạt` (Run batch) — xử lý toàn bộ file trong thư mục.
-- Khu vực trạng thái: `Subtitles (Done: X Processing: Y Total: Z) Elapsed: Ns`
-  — hàng đợi job hiển thị tiến độ real-time.
+### 3.4–3.6 Batch Job / Options / Thanh hành động chính
+- Chọn thư mục input, `Auto Split` (mặc định `.,;:!?`), `Tự động tạo Srt`.
+- `Start`/`Stop`, `Import File (*.srt;*.txt;*.dgt)`, `Import Folder`,
+  `Open Audio Output`, `Join Mp3 & Tạo srt`.
+- Khu trạng thái: `Subtitles (Done: X Processing: Y Total: Z) Elapsed: Ns`.
 
-### 3.5 Options
-- `Loop` — lặp lại xử lý (theo dõi thư mục / lặp queue).
-- `Auto Split` + ô nhập ký tự phân tách (mặc định `.,;:!?`) — tự động chẻ
-  văn bản dài thành nhiều câu/đoạn theo dấu câu trước khi gửi TTS (nhiều
-  engine TTS giới hạn độ dài input).
-- `Cài đặt nâng cao` (Advanced settings) — mở modal cấu hình mở rộng.
-
-### 3.6 Thanh hành động chính
-- `Start` / `Stop` — chạy/dừng queue.
-- `Import File (*.srt;*.txt;*.dgt)` — import văn bản/phụ đề làm nguồn text.
-- `Import Folder` — import cả thư mục file text.
-- `Import Voice` — import cấu hình giọng đã export trước đó.
-- `Open Audio Output` — mở thư mục chứa audio đã tạo.
-- `Join Mp3 & Tạo srt` — ghép nhiều file mp3 thành 1 file + tự sinh lại file
-  SRT với timestamp khớp theo độ dài từng đoạn audio đã ghép.
-
-### 3.7 Kết luận về workflow cốt lõi
+### 3.7 Workflow cốt lõi (đã implement, xem mục 6+8)
 ```
-Import text (file/folder/srt) 
+Import text (file/folder/srt) hoặc gõ tay
   → Auto Split thành từng đoạn theo dấu câu (nếu bật)
-  → Đưa vào queue (Batch Job)
-  → Với mỗi đoạn: gọi GenVoice API để generate audio (dùng Voice + Model +
-    voice settings đã chọn)
-  → Lưu file audio ngay khi nhận được (vì server tự xoá sau N giờ)
-  → (tuỳ chọn) Tự động tạo SRT khớp timing
-  → (tuỳ chọn) Join tất cả mp3 thành 1 file + SRT tổng hợp
+  → Đưa vào queue (Batch Job, chạy song song CONCURRENCY=4)
+  → Với mỗi đoạn: gọi GenVoice API để generate audio
+  → Lưu file audio ngay khi nhận được (server tự xoá sau 48h)
+  → (tuỳ chọn) Join mp3 + tạo SRT — ĐẶT TÊN theo group (xem mục 6)
 ```
 
 ## 4. Tech stack
 
 - **Shell:** Electron (main process = Node.js, renderer = Chromium).
-- **UI:** React 18 + TypeScript, Vite làm build tool.
-- **State management:** Zustand (đơn giản, đủ dùng cho queue/job state).
-- **Styling:** Tailwind CSS (dựng nhanh UI dạng form/table giống ảnh mẫu).
-- **Local storage:** file JSON đơn giản qua `secureStore.ts` (settings, API
-  key mã hoá bằng Electron `safeStorage`) — **không dùng SQLite/`better-sqlite3`
-  nữa**. Lý do đổi: đường dẫn project (`/Users/.../TTS AU`) có khoảng trắng,
-  khiến `node-gyp`/`@electron/rebuild` build native module thất bại
-  ("Attempting to build a module with a space in the path" — lỗi kinh điển
-  của node-gyp). Job history/voice library nếu cần bền vững nhiều sau này có
-  thể quay lại SQLite (đổi tên thư mục project bỏ khoảng trắng trước) hoặc
-  dùng Node built-in `node:sqlite`, nhưng KHÔNG dùng `better-sqlite3` khi
-  path còn khoảng trắng.
+- **UI:** React 18 + TypeScript, Vite (qua `electron-vite`) làm build tool.
+- **State management:** Zustand.
+- **Styling:** Tailwind CSS v4. UI đã redesign 2026-09-15 (xem mục 8) — màu
+  nhấn indigo, card bo góc + shadow, badge trạng thái, slider custom, cửa
+  sổ khoá cứng 1100x780 (xem mục 9).
+- **Local storage:** file JSON qua `secureStore.ts` (settings, API key mã
+  hoá bằng Electron `safeStorage`) — không dùng SQLite/`better-sqlite3`
+  (path project có khoảng trắng lúc mới tạo → lỗi node-gyp; nếu cần
+  SQLite sau này, đổi tên thư mục bỏ khoảng trắng hoặc dùng
+  `node:sqlite`).
 - **Audio/SRT processing:** gọi thẳng binary `ffmpeg-static` +
-  `ffprobe-static` qua `child_process.spawn` (KHÔNG dùng `fluent-ffmpeg` —
-  package này đã deprecated/không còn maintain); tự viết SRT writer.
+  `ffprobe-static` qua `child_process.spawn` (không dùng `fluent-ffmpeg`,
+  đã deprecated); tự viết SRT writer.
 - **HTTP client:** `axios`, bọc trong `genvoiceApi.ts`.
-- **Packaging:** `electron-builder` — build cho macOS (.dmg) trước, Windows
-  (.exe) sau nếu cần. **Lưu ý:** cần thêm `asarUnpack` cho
-  `node_modules/ffmpeg-static` và `node_modules/ffprobe-static` trong
-  `electron-builder.yml` trước khi build bản production (2 package này chứa
-  binary, không chạy được trong asar) — chưa làm, chỉ mới chạy tốt ở `npm run
-  dev`.
+- **Icon app:** `build/icon.ico` (đa độ phân giải 16→256, PNG-in-ICO),
+  `build/icon.png` + `resources/icon.png` (640x640) — ảnh do user cung cấp
+  (2026-09-15). `build/icon.icns` (macOS) **CHƯA cập nhật theo ảnh mới**
+  (cần công cụ trên máy Mac để tạo đúng .icns) — không quan trọng vì hiện
+  chỉ build Windows.
+- **Packaging:** `electron-builder`. `electron-builder.yml` có
+  `asarUnpack` cho `node_modules/ffmpeg-static/**` và
+  `node_modules/ffprobe-static/**`, `ffmpegService.ts` tự thay `app.asar`
+  → `app.asar.unpacked` trong path khi `app.isPackaged` — **CONFIRMED bằng
+  build production thật** (2026-09-15): `npm run build:win` chạy thành
+  công, ra `dist\ttsau-0.1.0-setup.exe` (NSIS) + `dist\win-unpacked\`; mở
+  trực tiếp `ttsau-scaffold.exe` xác nhận app chạy được, gọi trực tiếp
+  `ffmpeg.exe -version`/`ffprobe.exe -version` từ đúng path unpacked xác
+  nhận cả 2 binary chạy được. **Chưa test**: generate audio + join mp3
+  thật *bằng chính bản đã đóng gói* (chỉ mới verify ở `npm run dev`).
 - **Auto-update:** `electron-updater` đã cài + wire vào
-  `src/main/services/updateService.ts` (check khi app khởi động, chỉ chạy
-  khi `app.isPackaged` — không check lúc `npm run dev`). **CHƯA xong**: cần
-  cấu hình `publish` trong `electron-builder.yml` trỏ tới nơi host thật
-  (đã chọn GitHub Releases, tài khoản `dobichngoc799-bit`) rồi mới build
-  `--publish always` được — user chủ động dời việc tạo repo lại sau, ưu
-  tiên hoàn thiện MVP trước. Lưu ý khi quay lại: nếu dùng GitHub repo
-  private, phải nhúng token read-only vào app (rủi ro lộ token) — nên ưu
-  tiên repo public cho mục đích release/update.
+  `src/main/services/updateService.ts` (chỉ chạy khi `app.isPackaged`).
+  **CHƯA xong**: `publish` trong `electron-builder.yml` vẫn trỏ placeholder
+  (`https://example.com/auto-updates`) — cần tạo GitHub repo thật (tài
+  khoản `dobichngoc799-bit`, nên để public để tránh phải nhúng token) rồi
+  mới build `--publish always` được. User chủ động hoãn việc này lại.
+  Bản `.exe` hiện tại là **build local, chưa publish lên đâu cả**.
 
-## 5. Kiến trúc & cấu trúc thư mục (ĐÃ SCAFFOLD — khớp code thật trong repo)
+## 5. Kiến trúc & cấu trúc thư mục (khớp code thật trong repo)
 
-Dùng **electron-vite** (`npm create @quick-start/electron`) làm build tool
-thay vì tự cấu hình Vite — đây là convention chuẩn hiện tại của cộng đồng
-electron-vite, cấu trúc `src/main` / `src/preload` / `src/renderer` khác một
-chút so với bản nháp ban đầu (`electron/` + `src/`) nhưng cùng nguyên tắc:
+Dùng **electron-vite**, cấu trúc `src/main` / `src/preload` / `src/renderer`:
 **main process** lo filesystem/ffmpeg/network, **renderer** chỉ lo UI và gọi
 qua `window.api` (preload), không bật `nodeIntegration`.
 
 ```
-TTS AU/
+TTS-AU/
 ├── CLAUDE.md
 ├── electron.vite.config.ts       # cấu hình build (Tailwind v4 plugin, externalize deps)
 ├── electron-builder.yml
 ├── package.json
 ├── src/
 │   ├── shared/
-│   │   └── types.ts               # types dùng chung main + renderer (Voice, GenvoiceTask, BatchJobConfig...)
+│   │   └── types.ts               # types dùng chung main + renderer (xem mục 6)
 │   ├── main/                      # main process
-│   │   ├── index.ts               # tạo window, đăng ký toàn bộ ipcMain.handle
+│   │   ├── index.ts               # tạo window (1100x780, resizable:false), đăng ký ipcMain.handle, đọc file import + tính outputDir/outputBaseName
 │   │   ├── services/
-│   │   │   ├── genvoiceApi.ts     # MỌI call tới GenVoice API (đã implement theo schema CONFIRMED ở mục 2)
+│   │   │   ├── genvoiceApi.ts     # MỌI call tới GenVoice API
 │   │   │   ├── secureStore.ts     # lưu API key qua safeStorage + JSON file
-│   │   │   ├── textSplitter.ts    # auto split theo dấu câu + parse .srt/.txt/.dgt
-│   │   │   ├── ffmpegService.ts   # join mp3 + lấy duration (spawn ffmpeg/ffprobe binary trực tiếp)
+│   │   │   ├── textSplitter.ts    # autoSplitText (theo dấu câu) + extractLinesFromFileContent (.srt/.txt/.dgt)
+│   │   │   ├── ffmpegService.ts   # join mp3 + lấy duration, tự resolve path app.asar.unpacked
 │   │   │   └── srtService.ts      # build nội dung .srt từ danh sách đoạn + duration
 │   │   └── queue/
-│   │       └── batchJobQueue.ts   # BatchJobRunner: submit→poll→download tuần tự, emit progress
+│   │       └── batchJobQueue.ts   # BatchJobRunner: worker pool CONCURRENCY=4, xử lý theo group (BatchGroup), emit progress
 │   ├── preload/
-│   │   ├── index.ts               # contextBridge, expose window.api (settings/genvoice/dialog/batchJob...)
+│   │   ├── index.ts               # contextBridge, expose window.api
 │   │   └── index.d.ts
 │   └── renderer/
-│       ├── index.html
 │       └── src/
 │           ├── main.tsx, App.tsx
-│           ├── assets/main.css    # @import "tailwindcss"
-│           ├── store/             # zustand: settingsStore, voiceStore, jobStore
-│           └── components/        # ApiKeyBar, VoicePanel, BatchJobPanel, JobQueueTable, ActionToolbar
-├── resources/                     # icon app
-├── tsconfig.json / tsconfig.node.json / tsconfig.web.json
-└── build/                         # icon cho electron-builder
+│           ├── assets/main.css    # design tokens, custom range/checkbox style
+│           ├── store/             # zustand: settingsStore, voiceStore, jobStore (groups + sourceLines)
+│           └── components/        # ApiKeyBar, VoicePanel, BatchJobPanel, JobQueueTable, ActionToolbar (đều có nút thu gọn ▼ cho Voice/Batch Job)
+├── resources/icon.png             # icon app (640x640, ảnh user cung cấp)
+├── build/                         # icon.ico/.png/.icns cho electron-builder
+├── dist/                          # output build production (gitignore, KHÔNG commit)
+└── tsconfig.json / tsconfig.node.json / tsconfig.web.json
 ```
 
-**Trạng thái hiện tại:** `npm run typecheck`, `npm run build` và `npm run
-dev` (mở cửa sổ GUI thật) đều đã chạy được — đã verify thật.
-
-**Sự cố đã gặp khi cài lần đầu (ghi lại để nếu gặp lại thì biết cách fix
-ngay, không mất thời gian debug lại):**
-- Thư viện `extract-zip` (dependency của package `electron`, dùng để giải
-  nén Electron.app từ file zip tải về) **bị crash ngầm** khi giải nén trên
-  máy này — tiến trình Node thoát với exit code 0, không in lỗi, không tạo
-  xong `node_modules/electron/dist/Electron.app`, khiến `electron-vite dev`
-  báo `Error: Electron uninstall`. **Cách fix:** giải nén thủ công bằng công
-  cụ có sẵn của macOS thay vì để `node_modules/electron/install.js` tự làm:
-  ```bash
-  ditto -x -k ~/Library/Caches/electron/<hash>/electron-v<version>-darwin-<arch>.zip \
-    node_modules/electron/dist
-  printf 'Electron.app/Contents/MacOS/Electron' > node_modules/electron/path.txt
-  ```
-  (tìm đúng file zip/hash bằng `find ~/Library/Caches/electron -name "*.zip"`;
-  file đã tải sẵn nên không cần mạng lại). Nếu sau này chạy `rm -rf
-  node_modules && npm install` thì rất có thể phải làm lại bước này.
+**Môi trường dev — 2 máy khác nhau:**
+- **macOS** (dev ban đầu): gặp lỗi `extract-zip` crash ngầm khi cài
+  `electron` — fix bằng `ditto -x -k ~/Library/Caches/electron/<hash>/electron-v<version>-darwin-<arch>.zip node_modules/electron/dist` +
+  `printf 'Electron.app/Contents/MacOS/Electron' > node_modules/electron/path.txt`.
+  Nếu `rm -rf node_modules && npm install` thì rất có thể phải làm lại.
+- **Windows** (đang dùng): máy chỉ có sẵn Node **v16.15.0**, trong khi
+  `vite@7` yêu cầu Node ≥20.19 — không có nvm-windows và không cài được qua
+  winget (installer cần UAC elevation tương tác, môi trường chạy lệnh
+  không tương tác nên không xác nhận được prompt). **Fix đã dùng:** tải
+  bản portable `node-v22.14.0-win-x64.zip` từ nodejs.org, giải nén vào
+  `%USERPROFILE%\nodejs-portable\node-v22.14.0-win-x64`, thêm vào đầu PATH
+  cấp **User** (không cần quyền admin). Terminal/PowerShell **mới** tự
+  nhận; session/tool đã mở từ trước phải tự
+  `export PATH=".../nodejs-portable/node-v22.14.0-win-x64:$PATH"` (Bash)
+  hoặc `$env:Path = "...;" + $env:Path` (PowerShell) trước khi chạy
+  node/npm trong session đó.
 - Biến môi trường `ELECTRON_RUN_AS_NODE=1` chỉ tồn tại trong tool Claude
-  Code (không có trong Terminal thật của user) — làm `electron.app` bị
-  `undefined` nếu vô tình chạy `npm run dev` từ trong tool đó. Không liên
-  quan gì tới Terminal thật của user, không cần lo về việc này khi tự chạy
-  app bình thường.
+  Code, không có trong Terminal thật — làm `electron.app` bị `undefined`
+  nếu vô tình `npm run dev` từ trong tool đó (`unset ELECTRON_RUN_AS_NODE`
+  trước khi chạy để tránh).
+- **HMR có thể bị "kẹt"** sau nhiều lần sửa liên tục qua `npm run dev`: dev
+  server vẫn chạy, log vẫn in `hmr update`, nhưng cửa sổ Electron ngừng
+  nhận cập nhật mới một cách âm thầm (UI stale, vd. Model/Language dropdown
+  trống dù code đã đúng). Cách fix: kill hết process `electron.exe` rồi
+  `npm run dev` lại từ đầu — **nhưng nếu có batch job thật đang chạy
+  (credit thật), PHẢI đợi job xong hoặc hỏi user trước khi restart**, vì
+  restart sẽ huỷ các item chưa chạy xong giữa chừng.
 
-## 6. Data model — ĐÃ IMPLEMENT, xem `src/shared/types.ts`
+**Trạng thái:** `npm install`, `npm run typecheck`, `npm run build`,
+`npm run dev`, `npm run build:win` đều đã verify chạy được thật trên
+Windows (không chỉ đọc code suy luận).
 
-Interface thật (`GenvoiceAccount`, `GenvoiceModel`, `GenvoiceLanguage`,
-`GenvoiceVoice`, `VoiceSettings`, `GenvoiceTask`, `JobItem`, `BatchJobConfig`,
-`BatchProgressEvent`) đã viết trong code, khớp với response CONFIRMED ở mục
-2. Không copy lại nội dung ra đây để tránh lệch — sửa ở code trước, rồi cập
-nhật mục 2 nếu phát hiện điều gì mới, KHÔNG sửa ngược từ doc vào code.
+## 6. Data model — xem `src/shared/types.ts`
 
-Điểm còn ASSUMPTION cần nhớ khi đụng tới file này:
-- `VoiceSettings` gửi lên server dưới dạng lồng trong `voice_settings` của
-  body `submitTextToSpeech` — **chưa test thật** server có nhận/áp dụng
-  không (xem `genvoiceApi.ts` dòng có comment ASSUMPTION).
+Interface chính: `GenvoiceAccount`, `GenvoiceModel`, `GenvoiceLanguage`,
+`GenvoiceVoice`, `VoiceSettings`, `GenvoiceTask`, `JobItem`, `BatchGroup`,
+`BatchJobConfig`, `ImportedFileGroup`, `BatchProgressEvent`. Sửa ở code
+trước, cập nhật mục 2 nếu phát hiện điều gì mới — KHÔNG sửa ngược từ doc
+vào code.
+
+**Khái niệm "group" (thêm 2026-09-15 — tính năng import file tự tạo
+folder riêng):** 1 batch job có thể gồm nhiều `BatchGroup`, mỗi group là 1
+"nguồn" audio sẽ ghép + đặt tên chung:
+- **Group văn bản gõ tay** (nếu có nhập/paste vào textarea): dùng "Thư mục
+  output" user chọn tay (`settingsStore.outputDir`), `outputBaseName =
+  'joined'` — giữ đúng behavior cũ (001.mp3, 002.mp3..., joined.mp3/.srt).
+- **Group từ file import** (Import File/Folder, mỗi file .txt/.srt/.dgt =
+  1 group riêng): main process (`readImportedFileGroup` trong
+  `src/main/index.ts`) tự tính `outputDir` = folder MỚI cùng tên file
+  (không đuôi), tạo CẠNH file gốc, và `outputBaseName` = tên file đó. Vd
+  `C:\...\MyText.txt` → tạo `C:\...\MyText\`, audio lẻ vẫn đánh số
+  `001.mp3...`, nếu tick "Join Mp3" thì ghép thành `MyText.mp3` (+ `.srt`
+  nếu tick "Tự động tạo Srt") ngay trong folder đó. Import Folder xử lý
+  từng file độc lập (không gộp chung).
+- `.srt` import luôn tách theo đúng block phụ đề gốc (không áp Auto Split
+  đè lên) vì đã có đơn vị tự nhiên sẵn. `.txt`/`.dgt` thì theo Auto Split
+  đang bật/tắt của user (giống hệt cách xử lý text gõ tay) — đổi content
+  raw về renderer (`ImportedFileGroup.content`) để renderer tự tách lại
+  mỗi khi user đổi Auto Split, không tách cứng lúc import.
+- "Thư mục output" trong `BatchJobPanel.tsx` **chỉ áp dụng cho group gõ
+  tay** — không cần chọn nếu chỉ import file. Nút "Open Audio Output" mở
+  TẤT CẢ folder liên quan (folder gõ tay nếu có + folder từng file import,
+  mỗi cái 1 cửa sổ Explorer).
+- `jobStore.ts`: state `sourceLines` (gõ tay) + `importedGroups: ImportedGroup[]`
+  (mỗi phần tử giữ `content`+`ext` để recompute khi đổi Auto Split), hàm
+  `start()` gộp cả 2 nguồn thành `groups`+`items` gửi qua IPC
+  `batchJob:start`. `batchJobQueue.ts` (`BatchJobRunner`) resolve
+  `item.groupId` → `BatchGroup` để biết ghi file vào đâu, ghép+đặt tên
+  theo từng group riêng (không còn 1 `outputDir` global như trước).
+
+Điểm còn ASSUMPTION:
 - `JobItemStatus`/`GenvoiceTask.status` giữ kiểu `string` mở (không union
   đóng) vì mới quan sát được `pending` → `completed`, chưa thấy `failed`.
 
-## 7. GenVoice API integration layer — ĐÃ IMPLEMENT, xem `src/main/services/genvoiceApi.ts`
+## 7. GenVoice API integration layer — xem `src/main/services/genvoiceApi.ts`
 
-Toàn bộ call tới GenVoice nằm trong file này (dùng `axios`, xác thực bằng
-header `xi-api-key`). Luồng tạo audio (`BatchJobRunner.processItem` trong
-`src/main/queue/batchJobQueue.ts`) đã implement đúng flow bất đồng bộ:
-`submitTextToSpeech` (POST, trả 202+id) → `pollTaskUntilDone` (GET
-`/v1/history/{id}` lặp tới khi hết `pending`/`processing`) → tải
-`result.audio_url` về `outputDir` bằng axios (không dùng `xi-api-key` cho
-bước tải file vì URL này public).
+Toàn bộ call tới GenVoice nằm trong file này (`axios`, header `xi-api-key`).
+Flow tạo audio (`BatchJobRunner` trong `batchJobQueue.ts`, worker pool
+`CONCURRENCY=4`): `submitTextToSpeech` (POST, trả 202+id) →
+`pollTaskUntilDone` (GET `/v1/history/{id}` lặp tới khi hết
+`pending`/`processing`, interval 1500ms/timeout 120s — hard-code hợp lý,
+chưa phải số đo chính xác) → tải `result.audio_url` về đúng `outputDir`
+của group → ghép+đặt tên theo group nếu bật "Join Mp3"/"Tự động tạo Srt".
 
-**Việc còn lại, chưa làm (do cần test thêm với credit thật hoặc dữ liệu
-thật, không nên tự bịa):**
-1. Xác nhận `voice_settings` trong body POST có được server áp dụng không —
-   so sánh audio output khi bật/tắt "Change voice settings".
-2. Test 1 request vượt giới hạn ký tự để bắt thông báo lỗi thật.
-3. Test path thật của "Retry task"/"Delete history" cho text-to-speech
-   (hiện `batchJobQueue.ts` không có nút retry/xoá per-item).
-4. Test 1 lần `status: failed` thật (chưa quan sát được) để chắc chắn
-   `task.error` là field đúng cần đọc khi lỗi.
-5. Đo thời gian xử lý trung bình để tune `intervalMs`/`timeoutMs` trong
-   `pollTaskUntilDone` (hiện hard-code 1500ms / 120s — là phỏng đoán hợp lý,
-   chưa phải số đo thật).
-6. Bắt lỗi credit không đủ (HTTP status + body thật — chưa test) → hiện
-   `GenvoiceApiError` chỉ đọc field `error` chung chung, cần xử lý riêng case
-   này để dừng queue rõ ràng thay vì hiện lỗi mơ hồ.
-7. Endpoint tạo audio cho MiniMax/CapCut (`submitTextToSpeech` hiện chỉ test
-   với ElevenLabs) — path/body có thể khác.
+**Việc còn chưa làm** (cần credit thật/dữ liệu thật để test, không tự bịa
+schema — xem mục 2.4 để biết chi tiết từng mục):
+1. Test 1 request vượt giới hạn ký tự → bắt thông báo lỗi thật.
+2. Test path thật của "Retry task"/"Delete history" (chưa có nút per-item).
+3. Test 1 lần `status: failed` thật → xác nhận `task.error` là field đúng.
+4. Bắt lỗi credit không đủ (HTTP status + body thật) — hiện
+   `GenvoiceApiError` chỉ đọc field `error` chung chung.
+5. Endpoint tạo audio cho MiniMax/CapCut — path/body có thể khác.
 
-## 8. Tính năng ưu tiên (MVP) vs để sau
+## 8. Tính năng — trạng thái hiện tại
 
-**MVP — trạng thái implement (code đã viết, GUI chưa verify được — xem mục 5):**
-- [x] Chọn voice + model + language + voice settings (UI xong, backend gọi
-      thật) — `VoicePanel.tsx`.
-- [x] Nhập text trực tiếp + import file .txt/.srt/.dgt + import folder, auto
-      split theo dấu câu — `BatchJobPanel.tsx` + `textSplitter.ts`.
-- [x] Batch job: queue tuần tự (concurrency=1, xem lý do ở mục 7), hiển thị
-      Done/Processing/Total + elapsed time — `JobQueueTable.tsx` +
-      `batchJobQueue.ts`.
-- [x] Start/Stop giữa chừng (`stop()` set flag, poll loop tự dừng).
-- [x] Lưu audio về đĩa ngay khi task `completed` (không giữ `audio_url` lâu
-      dài).
-- [x] Join nhiều mp3 + tự sinh SRT tổng hợp — `ffmpegService.ts` +
-      `srtService.ts` (dùng ffmpeg concat demuxer, không re-encode).
-- [x] Hiển thị credit còn lại (`ApiKeyBar.tsx`, gọi `GET /v1/auth/me`).
-- [x] **Cảnh báo trước khi chạy job vượt quá credit** — `ActionToolbar.tsx`
-      ước tính `tổng ký tự = credit` (chỉ đúng cho provider `elevenlabs`,
-      xem CLAUDE.md mục 2.3), disable nút Start + hiện cảnh báo đỏ nếu vượt
-      quá `credit_balance`. Refresh lại balance sau mỗi lần chạy job.
-- [x] **Verify GUI thật chạy được** — đã tự chạy end-to-end: user xác nhận
-      generate audio thật thành công qua UI (không chỉ mở cửa sổ suông).
+**Core batch TTS (đã verify end-to-end với credit thật trên Windows):**
+- [x] Chọn voice (search toàn thư viện GenVoice hoặc dán ID trực tiếp) +
+      model + language + voice settings (CONFIRMED server áp dụng thật —
+      mục 2.3) — `VoicePanel.tsx`.
+- [x] Nhập text trực tiếp + import file `.txt/.srt/.dgt` + import folder,
+      Auto Split theo dấu câu (áp dụng cho cả text gõ tay lẫn nội dung file
+      import) — `BatchJobPanel.tsx` + `textSplitter.ts`.
+- [x] **Import file tự tạo folder + đặt tên theo file gốc** (tính năng mới
+      2026-09-15) — xem chi tiết mục 6.
+- [x] Batch job chạy **song song CONCURRENCY=4** (đổi từ tuần tự
+      2026-09-15, an toàn với rate limit ~2000 — mục 2.1), hiển thị
+      Done/Processing/Total + progress bar + elapsed time —
+      `JobQueueTable.tsx` + `batchJobQueue.ts`.
+- [x] Start/Stop giữa chừng.
+- [x] Lưu audio về đĩa ngay khi task `completed`.
+- [x] Join nhiều mp3 + tự sinh SRT, đặt tên theo group (mục 6) —
+      `ffmpegService.ts` + `srtService.ts` (ffmpeg concat demuxer, không
+      re-encode).
+- [x] Hiển thị credit còn lại + cảnh báo trước khi chạy job vượt quá credit
+      (ước tính `tổng ký tự = credit`, chỉ đúng cho `elevenlabs`) —
+      `ApiKeyBar.tsx` + `ActionToolbar.tsx`.
+- [x] Nút "Open Audio Output" mở tất cả folder liên quan (gõ tay + từng
+      file import).
 
-**Để sau (không phải bản đầu):**
-- Proxy management (mục 3.3) — không cần thiết vì gọi qua GenVoice có key
-  riêng, không giống việc né rate-limit tài khoản free ElevenLabs.
+**UI (redesign 2026-09-15):** màu nhấn indigo, card bo góc + shadow, badge
+trạng thái màu (Xong/Lỗi/Chờ...), progress bar, slider custom (Speed/Style/
+Stability/Similarity), panel Voice + Batch Job có nút thu gọn ▼ để nhường
+chỗ cho bảng Subtitles khi cần theo dõi job dài. Cửa sổ khoá cứng 1100x780,
+không cho resize/maximize (xem mục 9 — lý do).
+
+**Mặc định hiện tại của các checkbox** (đổi theo yêu cầu user, khác giá trị
+gốc lúc scaffold): `Auto Split` = tắt, `Tự động tạo Srt` = tắt, `Join Mp3
+sau khi xong` = bật, `Speaker Boost` = tắt.
+
+**Packaging:** đã build production Windows thật (`ttsau-0.1.0-setup.exe`),
+icon app đã đổi theo ảnh user cung cấp — xem mục 4.
+
+**Để sau (không phải ưu tiên hiện tại):**
+- Proxy management (mục 3.3) — không cần thiết vì gọi qua GenVoice.
 - Voice Library đồng bộ cloud / phân loại VIP.
-- Auto-update (`electron-updater`).
-- Hỗ trợ Dubbing (video) và Studio (multi-scene project) của GenVoice — đây
-  là tính năng lớn riêng, chỉ làm khi MVP TTS text-to-audio đã ổn định.
-- Đa nền tảng Windows build — ưu tiên macOS trước vì đó là máy dev hiện tại.
+- Publish GitHub Releases + bật auto-update thật (`electron-updater`) —
+  xem mục 4, đang hoãn.
+- Hỗ trợ Dubbing (video) và Studio (multi-scene) của GenVoice — tính năng
+  lớn riêng, chỉ làm khi MVP TTS text-to-audio đã ổn định hoàn toàn.
+- macOS: build lại + tạo `build/icon.icns` mới theo ảnh (cần máy Mac).
 
 ## 9. Quy ước phát triển
 
 - Toàn bộ gọi mạng ra ngoài (GenVoice API) đi qua `genvoiceApi.ts`, không
   rải `fetch`/`axios` khắp nơi.
-- Không hard-code API key trong source — đọc từ config lưu trong SQLite
-  hoặc OS keychain (Electron `safeStorage`), không lưu plaintext trong file
-  JSON thường. Key GenVoice của user gắn trực tiếp với `credit_balance`
-  thật (tương đương tiền) — tuyệt đối không log ra console/file, không
-  commit vào git, không gửi kèm trong báo cáo lỗi.
+- Không hard-code API key trong source — lưu qua OS keychain (Electron
+  `safeStorage`), không lưu plaintext. Key GenVoice của user gắn trực tiếp
+  với `credit_balance` thật (tương đương tiền) — tuyệt đối không log ra
+  console/file, không commit vào git, không gửi kèm trong báo cáo lỗi.
 - Mọi thao tác file (ffmpeg, đọc/ghi audio, import folder) chỉ chạy ở main
   process, expose qua IPC — không expose Node `fs` thẳng ra renderer.
 - Khi chưa chắc schema API, viết code với interface rõ ràng + comment
@@ -375,19 +389,42 @@ thật, không nên tự bịa):**
 - Giữ nguyên thuật ngữ/label tiếng Việt trong UI (giống app gốc: "Chạy hàng
   loạt", "Thư mục", "Tự động tạo Srt"...) trừ khi user yêu cầu đổi sang
   tiếng Anh.
+- **Cửa sổ app cố định kích thước 1100x780, không cho resize/maximize**
+  (`resizable: false`, `maximizable: false` trong `BrowserWindow` ở
+  `src/main/index.ts`) — quyết định 2026-09-15 sau khi phát hiện layout
+  responsive (`grid-cols-2 md:grid-cols-4` ở VoicePanel) bị đè/chồng chữ
+  khi user tự kéo cửa sổ nhỏ lại ở breakpoint giữa. Ngoài ra còn 1 lớp fix
+  khác biệt: **grid item cần `min-w-0`** để co đúng theo cột thay vì tràn
+  sang cột bên cạnh (lỗi CSS grid/flexbox kinh điển, xảy ra ngay cả ở đúng
+  kích thước cố định, không chỉ khi resize) — đã thêm `min-w-0` cho mọi ô
+  grid trong `VoicePanel.tsx`. Layout được canh vừa khít 1100x780 ở trạng
+  thái mặc định; khu giữa (Voice/Batch Job/Subtitles) có `overflow-y-auto`
+  làm lưới an toàn khi nội dung dài hơn bình thường.
+- **Trước khi restart `npm run dev`**: LUÔN kiểm tra có batch job thật
+  đang chạy không (dùng credit thật) — nếu có, hỏi user trước khi restart
+  vì sẽ huỷ các item chưa xong giữa chừng. Đổi code main process (vd
+  `src/main/index.ts`, `batchJobQueue.ts`) không tự hot-reload vào job
+  đang chạy — chỉ áp dụng cho lần Start tiếp theo sau khi restart.
 
 ## 10. Việc cần làm tiếp theo
 
-1. **User tự chạy `npm install && npm run dev` trong Terminal thật** (ngoài
-   Claude Code) để mở app lần đầu — đây là bước bắt buộc chưa làm được ở
-   phiên này (xem lý do ở mục 5). Nếu lỗi gì khi mở, báo lại nguyên văn lỗi.
-2. Dán API key thật vào ô đầu app, kiểm tra `credit_balance` hiện đúng số
-   dư, danh sách voice/model/language load được.
-3. Thử generate 1 đoạn text ngắn, xác nhận file mp3 xuất hiện trong output
-   dir đã chọn và nghe được.
-4. Xử lý các mục "chưa làm" ở mục 8 (cảnh báo credit trước khi chạy) và các
-   TODO thật trong `genvoiceApi.ts`/`batchJobQueue.ts` ở mục 7.
-5. Trước khi build bản production (`npm run build:mac`): thêm `asarUnpack`
-   cho `ffmpeg-static`/`ffprobe-static` trong `electron-builder.yml` (xem
-   mục 4) — build production sẽ lỗi vì binary không chạy được trong asar
-   nếu bỏ qua bước này.
+**Cần credit thật để test (xem chi tiết mục 2.4 / mục 7):**
+1. Test vượt giới hạn ký tự, credit không đủ, `status: failed` thật —
+   hiện toàn bộ 3 case này chưa quan sát được lần nào.
+2. Test endpoint MiniMax/CapCut (hiện chỉ verify ElevenLabs).
+3. Generate audio + join mp3 thật bằng **bản đã đóng gói**
+   (`dist\ttsau-0.1.0-setup.exe` hoặc `win-unpacked`) — chỉ mới verify ở
+   `npm run dev`, chưa tự tay bấm thử ở bản production dù code path giống
+   hệt nhau.
+
+**Việc không cần credit, có thể làm ngay khi quay lại:**
+4. Retry/Delete task per-item trong `JobQueueTable.tsx` (cần biết path
+   API thật trước — mục 2.4).
+5. Cân nhắc cho phép chỉnh `CONCURRENCY` (hiện hard-code 4 trong
+   `batchJobQueue.ts`) qua UI nếu user thấy cần nhanh/chậm hơn.
+6. macOS: build lại `build/icon.icns` theo ảnh icon mới (cần máy Mac).
+
+**Đang hoãn theo yêu cầu user (không phải việc quên làm):**
+7. Tạo GitHub repo + cấu hình `publish` trong `electron-builder.yml` để
+   bật auto-update thật qua GitHub Releases (tài khoản
+   `dobichngoc799-bit`) — xem mục 4.
