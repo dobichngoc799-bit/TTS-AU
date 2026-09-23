@@ -186,7 +186,10 @@ Import text (file/folder/srt) hoặc gõ tay
 - **HTTP client:** `axios`, bọc trong `genvoiceApi.ts`.
 - **Icon app:** `build/icon.ico` (đa độ phân giải 16→256, PNG-in-ICO),
   `build/icon.png` + `resources/icon.png` (640x640) — ảnh do user cung cấp
-  (2026-09-15). `build/icon.icns` (macOS) **CHƯA cập nhật theo ảnh mới**
+  (đổi ảnh mới 2026-09-23, chưa có trong release v0.1.0 — cần phát hành
+  bản sau). Lưu ý khi kiểm tra: `System.Drawing.Icon` của .NET không đọc
+  được entry PNG trong .ico (hiện ra nhiễu) — kiểm tra bằng cách tách từng
+  entry ra decode riêng, hoặc `ExtractAssociatedIcon` trên exe đã build. `build/icon.icns` (macOS) **CHƯA cập nhật theo ảnh mới**
   (cần công cụ trên máy Mac để tạo đúng .icns) — không quan trọng vì hiện
   chỉ build Windows.
 - **Packaging:** `electron-builder`. `electron-builder.yml` có
