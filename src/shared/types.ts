@@ -80,6 +80,7 @@ export type JobItemStatus =
   | 'submitting'
   | 'queued_on_server'
   | 'polling'
+  | 'rate_limited'
   | 'done'
   | 'error'
   | 'skipped'
@@ -117,6 +118,9 @@ export interface BatchJobConfig {
   items: { id: string; groupId: string; index: number; sourceText: string }[]
   autoGenerateSrt: boolean
   joinAudio: boolean
+  // Khoảng lặng (giây) chèn giữa các đoạn khi Join Mp3 — để user dễ nhận ra
+  // ranh giới từng đoạn khi cần cắt. 0 = nối liền như cũ.
+  joinGapSeconds: number
 }
 
 // Kết quả main process trả về khi import 1 file (.txt/.srt/.dgt) — main process
@@ -152,3 +156,5 @@ export const DEFAULT_VOICE_SETTINGS: VoiceSettings = {
 }
 
 export const DEFAULT_AUTO_SPLIT_DELIMITERS = '.,;:!?'
+
+export const DEFAULT_JOIN_GAP_SECONDS = 1.5

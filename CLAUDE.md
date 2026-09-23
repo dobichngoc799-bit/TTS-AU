@@ -1,4 +1,12 @@
-# TTS AU — Desktop Text-to-Speech Batch Tool
+# TTS V1 — Desktop Text-to-Speech Batch Tool
+
+> **Tên app:** "TTS V1" (đổi từ "TTS AU"/`ttsau-scaffold` ngày 2026-09-23 —
+> chỉ đổi tên hiển thị: title, header, `productName`, `executableName`, tên
+> file cài `TTS-V1-<version>-setup.exe`). CỐ Ý giữ nguyên: `name: ttsau`
+> trong package.json, `appId`, `setAppUserModelId`, và thư mục userData của
+> bản đóng gói được ghim về `%APPDATA%\ttsau-scaffold` trong
+> `src/main/index.ts` — để không mất API key/settings đã lưu và không cài
+> thành app song song. Các chỗ ghi `ttsau-*.exe` bên dưới là lịch sử build cũ.
 
 ## 1. Mục tiêu dự án
 
@@ -31,8 +39,14 @@ của user.
   gốc — GenVoice giữ nguyên convention này).
 - **Rate limit:** có header `x-ratelimit-limit` / `x-ratelimit-remaining` /
   `x-ratelimit-reset` trên mọi response (quan sát được limit ~2000, reset
-  tính theo giây). `batchJobQueue.ts` chạy `CONCURRENCY=4` song song — an
-  toàn so với mức này (xem mục 8).
+  tính theo giây). `batchJobQueue.ts` chạy `CONCURRENCY=4` song song.
+  **Thực tế (2026-09-23):** user báo file 60 dòng chạy tới ~dòng 40 thì
+  server trả lỗi `rate_limit_exceeded` — mức ~2000 không phải giới hạn duy
+  nhất (có thể có limit riêng theo phút/theo số task TTS, chưa rõ). Đã thêm
+  tự đợi + thử lại (`withRateLimitRetry` trong `genvoiceApi.ts`, đợi theo
+  `retry-after`/`x-ratelimit-reset` hoặc backoff 5s→60s, tối đa 10 lần, UI
+  hiện badge "Đợi rate limit"). **Chưa verify với credit thật**: HTTP status
+  thật (đang giả định 429) và ý nghĩa chính xác của `x-ratelimit-reset`.
 - API key là bí mật của tài khoản (không phải mã dùng chung) — **không bao
   giờ** commit key vào git hay ghi log ra file, chỉ lưu qua OS keychain
   (xem mục 9).
@@ -187,11 +201,16 @@ Import text (file/folder/srt) hoặc gõ tay
   thật *bằng chính bản đã đóng gói* (chỉ mới verify ở `npm run dev`).
 - **Auto-update:** `electron-updater` đã cài + wire vào
   `src/main/services/updateService.ts` (chỉ chạy khi `app.isPackaged`).
-  **CHƯA xong**: `publish` trong `electron-builder.yml` vẫn trỏ placeholder
-  (`https://example.com/auto-updates`) — cần tạo GitHub repo thật (tài
-  khoản `dobichngoc799-bit`, nên để public để tránh phải nhúng token) rồi
-  mới build `--publish always` được. User chủ động hoãn việc này lại.
-  Bản `.exe` hiện tại là **build local, chưa publish lên đâu cả**.
+  **Cấu hình 2026-09-23:** `publish` = GitHub Releases repo public
+  `dobichngoc799-bit/TTS-AU`, `releaseType: release` (không draft). Build
+  local `npm run build:win` (`--publish never`) đã verify ra
+  `dist\TTS-V1-<ver>-setup.exe` + `latest.yml`, và `app-update.yml` trong
+  `resources` trỏ đúng repo. Phát hành bản mới: tăng `version` trong
+  package.json → `$env:GH_TOKEN="<token>"` → `npm run release`. Token chỉ
+  đặt qua biến môi trường, KHÔNG ghi vào file/commit. Nếu có batch job đang
+  chạy khi tải xong update thì không restart (tự cài khi tắt app). Các bản
+  build TRƯỚC 2026-09-23 trỏ URL placeholder nên không tự update được —
+  phải cài tay 1 lần bản mới.
 
 ## 5. Kiến trúc & cấu trúc thư mục (khớp code thật trong repo)
 
@@ -346,6 +365,13 @@ schema — xem mục 2.4 để biết chi tiết từng mục):
 - [x] Join nhiều mp3 + tự sinh SRT, đặt tên theo group (mục 6) —
       `ffmpegService.ts` + `srtService.ts` (ffmpeg concat demuxer, không
       re-encode).
+- [x] **Khoảng lặng giữa các đoạn khi Join** (2026-09-23, mặc định 1.5s,
+      0 = nối liền, chỉnh ở ô "Khoảng lặng" cạnh "Join Mp3") — để user dễ
+      nhận ra chỗ cắt. Tạo 1 file mp3 im lặng cùng sample rate/kênh với
+      đoạn đầu rồi chèn vào list concat (vẫn không re-encode); SRT cộng
+      thêm độ dài THẬT của file im lặng (mp3 làm tròn theo frame, vd 1.5s →
+      ~1.54s). Đã verify lệnh ffmpeg bằng file test, chưa verify với audio
+      GenVoice thật.
 - [x] Hiển thị credit còn lại + cảnh báo trước khi chạy job vượt quá credit
       (ước tính `tổng ký tự = credit`, chỉ đúng cho `elevenlabs`) —
       `ApiKeyBar.tsx` + `ActionToolbar.tsx`.
@@ -424,7 +450,6 @@ icon app đã đổi theo ảnh user cung cấp — xem mục 4.
    `batchJobQueue.ts`) qua UI nếu user thấy cần nhanh/chậm hơn.
 6. macOS: build lại `build/icon.icns` theo ảnh icon mới (cần máy Mac).
 
-**Đang hoãn theo yêu cầu user (không phải việc quên làm):**
-7. Tạo GitHub repo + cấu hình `publish` trong `electron-builder.yml` để
-   bật auto-update thật qua GitHub Releases (tài khoản
-   `dobichngoc799-bit`) — xem mục 4.
+**Auto-update:**
+7. Đã cấu hình GitHub Releases (xem mục 4) — còn chờ publish release đầu
+   tiên (cần GH_TOKEN của user) và test update thật giữa 2 version.

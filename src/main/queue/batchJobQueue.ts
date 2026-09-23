@@ -84,28 +84,49 @@ export class BatchJobRunner {
       return
     }
 
+    const isStopped = (): boolean => this.stopped
+    const signal = {
+      get aborted() {
+        return isStopped()
+      }
+    }
+    // Bị rate limit: genvoiceApi tự đợi rồi thử lại — chỉ đổi badge sang
+    // "Đợi rate limit" trong lúc đợi rồi trả lại trạng thái trước đó.
+    let statusBeforeRateLimit = item.status
+    const onRateLimited = (waitMs: number): void => {
+      if (item.status !== 'rate_limited') statusBeforeRateLimit = item.status
+      item.status = 'rate_limited'
+      this.emit(undefined, false)
+      setTimeout(() => {
+        if (item.status === 'rate_limited') {
+          item.status = statusBeforeRateLimit
+          this.emit(undefined, false)
+        }
+      }, waitMs)
+    }
+
     try {
       item.status = 'submitting'
       this.emit(undefined, false)
 
-      const { id: taskId } = await genvoiceApi.submitTextToSpeech(this.apiKey, {
-        voiceId: this.job.voiceId,
-        text: item.sourceText,
-        modelId: this.job.modelId,
-        languageCode: this.job.languageCode,
-        voiceSettings: this.job.voiceSettingsEnabled ? this.job.voiceSettings : undefined
-      })
+      const { id: taskId } = await genvoiceApi.submitTextToSpeech(
+        this.apiKey,
+        {
+          voiceId: this.job.voiceId,
+          text: item.sourceText,
+          modelId: this.job.modelId,
+          languageCode: this.job.languageCode,
+          voiceSettings: this.job.voiceSettingsEnabled ? this.job.voiceSettings : undefined
+        },
+        { signal, onRateLimited }
+      )
       item.taskId = taskId
       item.status = 'polling'
       this.emit(undefined, false)
 
-      const runner = this
       const task = await genvoiceApi.pollTaskUntilDone(this.apiKey, taskId, {
-        signal: {
-          get aborted() {
-            return runner.stopped
-          }
-        }
+        signal,
+        onRateLimited
       })
 
       if (task.status !== 'completed' || !task.result) {
@@ -143,13 +164,17 @@ export class BatchJobRunner {
       if (done.length === 0) continue
 
       const joinedPath = join(group.outputDir, `${group.outputBaseName}.mp3`)
-      await joinMp3Files(
+      const gapMs = await joinMp3Files(
         done.map((i) => i.outputAudioPath!),
-        joinedPath
+        joinedPath,
+        this.job.joinGapSeconds
       )
 
       if (this.job.autoGenerateSrt) {
-        const srt = buildSrt(done.map((i) => ({ text: i.sourceText, durationMs: i.durationMs ?? 0 })))
+        const srt = buildSrt(
+          done.map((i) => ({ text: i.sourceText, durationMs: i.durationMs ?? 0 })),
+          gapMs
+        )
         await fs.writeFile(join(group.outputDir, `${group.outputBaseName}.srt`), srt, 'utf-8')
       }
     }
@@ -160,7 +185,11 @@ export class BatchJobRunner {
     this.lastItems = snapshot
     const done = snapshot.filter((i) => i.status === 'done').length
     const processing = snapshot.filter(
-      (i) => i.status === 'submitting' || i.status === 'polling' || i.status === 'queued_on_server'
+      (i) =>
+        i.status === 'submitting' ||
+        i.status === 'polling' ||
+        i.status === 'queued_on_server' ||
+        i.status === 'rate_limited'
     ).length
     this.onProgress({
       jobId: String(this.startedAt),

@@ -14,16 +14,16 @@ function formatTimestamp(ms: number): string {
 }
 
 // Sinh nội dung file .srt từ danh sách đoạn text + duration audio tương ứng
-// (dùng khi "Join Mp3 & Tạo srt" — mục 3.6 CLAUDE.md). Các đoạn nối tiếp
-// nhau không có khoảng lặng giữa các câu (khớp với cách ghép mp3 bằng
-// ffmpeg concat demuxer, không chèn silence).
-export function buildSrt(entries: SrtEntry[]): string {
+// (dùng khi "Join Mp3 & Tạo srt" — mục 3.6 CLAUDE.md). `gapMs` = khoảng lặng
+// chèn giữa các đoạn khi ghép mp3 (xem joinMp3Files) — phải truyền đúng độ
+// dài thật để phụ đề khớp với file ghép.
+export function buildSrt(entries: SrtEntry[], gapMs = 0): string {
   let cursorMs = 0
   const blocks: string[] = []
   entries.forEach((entry, i) => {
     const startMs = cursorMs
     const endMs = cursorMs + entry.durationMs
-    cursorMs = endMs
+    cursorMs = endMs + gapMs
     blocks.push(
       [
         String(i + 1),

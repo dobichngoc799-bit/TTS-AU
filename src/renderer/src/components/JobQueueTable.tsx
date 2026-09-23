@@ -5,6 +5,7 @@ const STATUS_LABEL: Record<string, string> = {
   submitting: 'Đang gửi...',
   polling: 'Đang xử lý...',
   queued_on_server: 'Server đang xử lý',
+  rate_limited: 'Đợi rate limit',
   done: 'Xong',
   error: 'Lỗi',
   skipped: 'Đã bỏ qua'
@@ -15,6 +16,7 @@ const STATUS_BADGE: Record<string, string> = {
   submitting: 'bg-blue-50 text-blue-600',
   polling: 'bg-blue-50 text-blue-600',
   queued_on_server: 'bg-blue-50 text-blue-600',
+  rate_limited: 'bg-amber-50 text-amber-600',
   done: 'bg-emerald-50 text-emerald-600',
   error: 'bg-red-50 text-red-600',
   skipped: 'bg-gray-100 text-gray-500'

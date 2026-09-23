@@ -15,13 +15,15 @@ export function BatchJobPanel(): React.JSX.Element {
     autoSplitDelimiters,
     autoGenerateSrt,
     joinAudio,
+    joinGapSeconds,
     setSourceText,
     addImportedGroups,
     clearLines,
     setAutoSplitEnabled,
     setAutoSplitDelimiters,
     setAutoGenerateSrt,
-    setJoinAudio
+    setJoinAudio,
+    setJoinGapSeconds
   } = useJobStore()
   const [collapsed, setCollapsed] = useState(false)
 
@@ -93,6 +95,23 @@ export function BatchJobPanel(): React.JSX.Element {
                 onChange={(e) => setJoinAudio(e.target.checked)}
               />
               Join Mp3 sau khi xong
+            </label>
+            <label
+              className={`flex items-center gap-2 ${joinAudio ? '' : 'opacity-40'}`}
+              title="Chèn khoảng lặng giữa các đoạn khi ghép, để dễ nhận ra chỗ cắt. 0 = nối liền."
+            >
+              Khoảng lặng
+              <input
+                type="number"
+                min={0}
+                max={10}
+                step={0.5}
+                disabled={!joinAudio}
+                className="w-16 rounded-lg border border-gray-300 px-2 py-1 text-sm outline-none transition-colors focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/15 disabled:cursor-not-allowed"
+                value={joinGapSeconds}
+                onChange={(e) => setJoinGapSeconds(parseFloat(e.target.value))}
+              />
+              giây
             </label>
           </div>
 

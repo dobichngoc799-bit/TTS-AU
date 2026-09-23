@@ -7,7 +7,7 @@ import type {
   JobItem,
   VoiceSettings
 } from '@shared/types'
-import { DEFAULT_AUTO_SPLIT_DELIMITERS } from '@shared/types'
+import { DEFAULT_AUTO_SPLIT_DELIMITERS, DEFAULT_JOIN_GAP_SECONDS } from '@shared/types'
 
 // 1 file import (.txt/.srt/.dgt) = 1 group riêng, tự ghép + đặt tên theo file
 // gốc (outputDir/outputBaseName main process đã tính sẵn — xem
@@ -30,6 +30,7 @@ interface JobState {
   autoSplitDelimiters: string
   autoGenerateSrt: boolean
   joinAudio: boolean
+  joinGapSeconds: number
 
   running: boolean
   items: JobItem[]
@@ -49,6 +50,7 @@ interface JobState {
   setAutoSplitDelimiters: (delimiters: string) => void
   setAutoGenerateSrt: (enabled: boolean) => void
   setJoinAudio: (enabled: boolean) => void
+  setJoinGapSeconds: (seconds: number) => void
 
   start: (
     apiKey: string,
@@ -60,6 +62,7 @@ interface JobState {
       voiceSettings: VoiceSettings
       autoGenerateSrt: boolean
       joinAudio: boolean
+      joinGapSeconds: number
       // "Thư mục output" user chọn tay — chỉ dùng cho group văn bản gõ tay
       // (sourceLines). Các group từ file import luôn dùng outputDir riêng
       // (folder cạnh file gốc), không liên quan tới field này.
@@ -96,6 +99,7 @@ export const useJobStore = create<JobState>((set, get) => ({
   autoSplitDelimiters: DEFAULT_AUTO_SPLIT_DELIMITERS,
   autoGenerateSrt: false,
   joinAudio: true,
+  joinGapSeconds: DEFAULT_JOIN_GAP_SECONDS,
 
   running: false,
   items: [],
@@ -174,6 +178,8 @@ export const useJobStore = create<JobState>((set, get) => ({
   },
   setAutoGenerateSrt: (enabled) => set({ autoGenerateSrt: enabled }),
   setJoinAudio: (enabled) => set({ joinAudio: enabled }),
+  setJoinGapSeconds: (seconds) =>
+    set({ joinGapSeconds: Number.isFinite(seconds) ? Math.min(10, Math.max(0, seconds)) : 0 }),
 
   start: async (apiKey, cfg) => {
     const { sourceLines, importedGroups } = get()
@@ -233,6 +239,7 @@ export const useJobStore = create<JobState>((set, get) => ({
         voiceSettings: cfg.voiceSettings,
         autoGenerateSrt: cfg.autoGenerateSrt,
         joinAudio: cfg.joinAudio,
+        joinGapSeconds: cfg.joinGapSeconds,
         groups,
         items
       })

@@ -11,7 +11,7 @@ export function ApiKeyBar(): React.JSX.Element {
         <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-indigo-600 text-sm font-bold text-white">
           T
         </div>
-        <h1 className="text-sm font-semibold text-gray-800">TTS AU</h1>
+        <h1 className="text-sm font-semibold text-gray-800">TTS V1</h1>
         <div className="mx-1 h-5 w-px bg-gray-200" />
         <span className="text-xs text-gray-400">Tài khoản</span>
         <span className="text-sm font-medium text-gray-700">{account.email}</span>

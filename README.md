@@ -1,6 +1,6 @@
-# ttsau-scaffold
+# TTS V1
 
-An Electron application with React and TypeScript
+Desktop batch Text-to-Speech tool calling the GenVoice API (Electron + React + TypeScript)
 
 ## Recommended IDE Setup
 

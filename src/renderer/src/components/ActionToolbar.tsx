@@ -10,8 +10,16 @@ export function ActionToolbar(): React.JSX.Element {
   const refreshAccount = useSettingsStore((s) => s.refreshAccount)
   const { selectedVoiceId, selectedModelId, selectedLanguageCode, voiceSettingsEnabled, voiceSettings } =
     useVoiceStore()
-  const { running, start, stop, autoGenerateSrt, joinAudio, sourceLines, importedGroups } =
-    useJobStore()
+  const {
+    running,
+    start,
+    stop,
+    autoGenerateSrt,
+    joinAudio,
+    joinGapSeconds,
+    sourceLines,
+    importedGroups
+  } = useJobStore()
   const [error, setError] = useState<string | null>(null)
 
   const totalLineCount = sourceLines.length + importedGroups.reduce((sum, g) => sum + g.lines.length, 0)
@@ -69,7 +77,8 @@ export function ActionToolbar(): React.JSX.Element {
         voiceSettings,
         manualOutputDir: outputDir,
         autoGenerateSrt,
-        joinAudio
+        joinAudio,
+        joinGapSeconds
       })
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))

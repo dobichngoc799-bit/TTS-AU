@@ -1,5 +1,5 @@
 appId: com.electron.app
-productName: ttsau-scaffold
+productName: TTS V1
 directories:
   buildResources: build
 files:
@@ -14,9 +14,9 @@ asarUnpack:
   - node_modules/ffmpeg-static/**
   - node_modules/ffprobe-static/**
 win:
-  executableName: ttsau-scaffold
+  executableName: TTS V1
 nsis:
-  artifactName: ${name}-${version}-setup.${ext}
+  artifactName: TTS-V1-${version}-setup.${ext}
   shortcutName: ${productName}
   uninstallDisplayName: ${productName}
   createDesktopShortcut: always
@@ -40,6 +40,11 @@ linux:
 appImage:
   artifactName: ${name}-${version}.${ext}
 npmRebuild: false
+# Auto-update qua GitHub Releases (repo public → app tải update không cần
+# token). Chỉ lúc PUBLISH (`npm run release`) mới cần biến môi trường GH_TOKEN.
+# releaseType: release → bản mới hiện cho app ngay, không nằm ở dạng draft.
 publish:
-  provider: generic
-  url: https://example.com/auto-updates
+  provider: github
+  owner: dobichngoc799-bit
+  repo: TTS-AU
+  releaseType: release

@@ -25,6 +25,14 @@ async function readImportedFileGroup(filePath: string): Promise<ImportedFileGrou
   }
 }
 
+// Thư mục userData (settings.json + API key mã hoá) mặc định đặt theo
+// productName. App đổi tên "ttsau-scaffold" → "TTS V1" (2026-09-23) — ghim lại
+// folder cũ để bản đóng gói mới vẫn đọc được API key/settings đã lưu. Bản dev
+// dùng package.json `name` ("ttsau", không đổi) nên không bị ảnh hưởng.
+if (app.isPackaged) {
+  app.setPath('userData', join(app.getPath('appData'), 'ttsau-scaffold'))
+}
+
 let mainWindow: BrowserWindow | null = null
 let activeRunner: BatchJobRunner | null = null
 
@@ -166,7 +174,7 @@ app.whenReady().then(() => {
 
   registerIpcHandlers()
   createWindow()
-  initAutoUpdater()
+  initAutoUpdater(() => activeRunner !== null)
 
   app.on('activate', function () {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()

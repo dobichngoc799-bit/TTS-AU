@@ -48,15 +48,71 @@ export async function getAudioDurationMs(filePath: string): Promise<number> {
   return Math.round(seconds * 1000)
 }
 
+// Tạo 1 file mp3 im lặng dài `seconds`, cùng sample rate + số kênh với
+// `referencePath` — để concat demuxer ghép chung với audio GenVoice mà không
+// cần re-encode (mp3 khác bitrate vẫn nối được, nhưng khác sample rate/kênh
+// thì player dễ lỗi). Trả về duration thật (mp3 làm tròn theo frame ~26ms).
+async function createSilenceMp3(
+  referencePath: string,
+  seconds: number,
+  outputPath: string
+): Promise<number> {
+  const out = await run(ffprobePath, [
+    '-v',
+    'error',
+    '-select_streams',
+    'a:0',
+    '-show_entries',
+    'stream=sample_rate,channels',
+    '-of',
+    'json',
+    referencePath
+  ])
+  const stream = JSON.parse(out)?.streams?.[0] ?? {}
+  const sampleRate = Number(stream.sample_rate) || 44100
+  const channels = Number(stream.channels) || 1
+  await run(ffmpegPath, [
+    '-y',
+    '-f',
+    'lavfi',
+    '-i',
+    `anullsrc=r=${sampleRate}:cl=${channels === 1 ? 'mono' : 'stereo'}`,
+    '-t',
+    String(seconds),
+    '-c:a',
+    'libmp3lame',
+    '-b:a',
+    '128k',
+    outputPath
+  ])
+  return getAudioDurationMs(outputPath)
+}
+
 // Ghép nhiều mp3 thành 1 file — dùng ffmpeg concat demuxer (không re-encode,
 // giữ nguyên chất lượng, nhanh). Yêu cầu các file input cùng codec (đều là
-// mp3 do GenVoice trả về nên an toàn).
-export async function joinMp3Files(inputPaths: string[], outputPath: string): Promise<void> {
+// mp3 do GenVoice trả về nên an toàn). `gapSeconds` > 0 thì chèn khoảng lặng
+// giữa các đoạn (không chèn sau đoạn cuối). Trả về độ dài thật (ms) của mỗi
+// khoảng lặng để tính SRT cho khớp (0 nếu không chèn).
+export async function joinMp3Files(
+  inputPaths: string[],
+  outputPath: string,
+  gapSeconds = 0
+): Promise<number> {
   if (inputPaths.length === 0) throw new Error('joinMp3Files: danh sách input rỗng')
 
-  const listFile = join(tmpdir(), `ttsau-concat-${Date.now()}.txt`)
-  const listContent = inputPaths.map((p) => `file '${p.replace(/'/g, "'\\''")}'`).join('\n')
-  await fs.writeFile(listFile, listContent, 'utf-8')
+  const stamp = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+  const listFile = join(tmpdir(), `ttsau-concat-${stamp}.txt`)
+  const silenceFile = join(tmpdir(), `ttsau-silence-${stamp}.mp3`)
+  const useGap = gapSeconds > 0 && inputPaths.length > 1
+  const gapMs = useGap ? await createSilenceMp3(inputPaths[0], gapSeconds, silenceFile) : 0
+
+  const entry = (p: string): string => `file '${p.replace(/'/g, "'\\''")}'`
+  const listLines: string[] = []
+  inputPaths.forEach((p, i) => {
+    if (useGap && i > 0) listLines.push(entry(silenceFile))
+    listLines.push(entry(p))
+  })
+  await fs.writeFile(listFile, listLines.join('\n'), 'utf-8')
 
   try {
     await run(ffmpegPath, [
@@ -73,5 +129,7 @@ export async function joinMp3Files(inputPaths: string[], outputPath: string): Pr
     ])
   } finally {
     await fs.unlink(listFile).catch(() => {})
+    if (useGap) await fs.unlink(silenceFile).catch(() => {})
   }
+  return gapMs
 }
