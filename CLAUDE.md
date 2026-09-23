@@ -207,7 +207,16 @@ Import text (file/folder/srt) hoặc gõ tay
   `dist\TTS-V1-<ver>-setup.exe` + `latest.yml`, và `app-update.yml` trong
   `resources` trỏ đúng repo. Phát hành bản mới: tăng `version` trong
   package.json → `$env:GH_TOKEN="<token>"` → `npm run release`. Token chỉ
-  đặt qua biến môi trường, KHÔNG ghi vào file/commit. Nếu có batch job đang
+  đặt qua biến môi trường, KHÔNG ghi vào file/commit. Token cần quyền
+  **Contents: Read and write** trên repo (fine-grained phải chọn "Only
+  select repositories" thì mục Contents mới hiện) hoặc `public_repo`
+  (classic). `npm run release` chạy `scripts/create-github-release.mjs`
+  trước: tạo sẵn release `v<version>` vì electron-builder upload song song
+  và tự tạo release 2 lần → lỗi 422, file .exe/latest.yml không lên (đã
+  gặp thật khi phát hành v0.1.0 — phải upload tay + sửa lại sha512 trong
+  latest.yml). Script cũng chặn nếu release version đó đã có file .exe
+  (quên tăng version). **v0.1.0 đã phát hành 2026-09-23**, đã verify tải
+  về qua link public khớp sha512 trong latest.yml. Nếu có batch job đang
   chạy khi tải xong update thì không restart (tự cài khi tắt app). Các bản
   build TRƯỚC 2026-09-23 trỏ URL placeholder nên không tự update được —
   phải cài tay 1 lần bản mới.
@@ -451,5 +460,5 @@ icon app đã đổi theo ảnh user cung cấp — xem mục 4.
 6. macOS: build lại `build/icon.icns` theo ảnh icon mới (cần máy Mac).
 
 **Auto-update:**
-7. Đã cấu hình GitHub Releases (xem mục 4) — còn chờ publish release đầu
-   tiên (cần GH_TOKEN của user) và test update thật giữa 2 version.
+7. Đã phát hành v0.1.0 lên GitHub Releases (xem mục 4) — còn test update
+   thật: cài v0.1.0, phát hành v0.1.1, mở app xem có hỏi cập nhật không.
