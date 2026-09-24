@@ -38,8 +38,8 @@ export interface GenvoiceVoice {
   previewUrl?: string
 }
 
-// Mirrors ElevenLabs voice_settings naming. ASSUMPTION: chưa xác nhận GenVoice
-// có nhận field này trong body POST /v1/text-to-speech/{voiceId} hay không.
+// Mirrors ElevenLabs voice_settings naming. CONFIRMED server có áp dụng
+// (CLAUDE.md mục 2.3).
 export interface VoiceSettings {
   stability: number // 0-100 in UI, gửi lên dạng 0-1
   similarity_boost: number // 0-100 in UI, gửi lên dạng 0-1
@@ -84,6 +84,10 @@ export type JobItemStatus =
   | 'done'
   | 'error'
   | 'skipped'
+  // Đã submit (có taskId, credit đã trừ) nhưng chưa tải được audio về — do
+  // Stop, timeout poll, mất mạng hoặc app bị tắt. "Chạy tiếp" chỉ poll + tải
+  // lại theo taskId, KHÔNG submit lại (không tốn credit lần 2).
+  | 'interrupted'
 
 export interface JobItem {
   id: string
@@ -145,6 +149,26 @@ export interface BatchProgressEvent {
   elapsedMs: number
   finished: boolean
   stopped: boolean
+  // Tên (outputBaseName) các group KHÔNG được ghép vì còn đoạn chưa xong —
+  // ghép thiếu câu mà không báo còn tệ hơn không ghép. Chỉ có ở event cuối.
+  incompleteGroups?: string[]
+}
+
+// Trạng thái batch job lưu xuống đĩa (userData/current-job.json) sau mỗi thay
+// đổi — để chạy tiếp sau khi Stop/crash/tắt app, hoặc chạy lại các đoạn lỗi.
+// KHÔNG chứa API key. Chạy tiếp luôn dùng lại đúng voice/model/settings của
+// job gốc (config), không dùng lựa chọn hiện tại trên UI.
+export interface SavedBatchJob {
+  version: 1
+  createdAt: number
+  config: BatchJobConfig
+  items: JobItem[]
+}
+
+// Kết quả khi bấm Start/Chạy tiếp: `cancelled` = user bấm Huỷ ở hộp thoại
+// hỏi xoá file audio cũ trong thư mục output.
+export interface BatchStartResult {
+  cancelled: boolean
 }
 
 export const DEFAULT_VOICE_SETTINGS: VoiceSettings = {

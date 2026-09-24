@@ -41,9 +41,7 @@ của user.
   gốc — GenVoice giữ nguyên convention này).
 - **Rate limit:** có header `x-ratelimit-limit` / `x-ratelimit-remaining` /
   `x-ratelimit-reset` trên mọi response (quan sát được limit ~2000, reset
-  tính theo giây). `batchJobQueue.ts` chạy `CONCURRENCY=4` song song
-  (comment trong file đó còn ghi "~2000 nên rất an toàn" — đã lỗi thời,
-  xem đoạn dưới).
+  tính theo giây). `batchJobQueue.ts` chạy `CONCURRENCY=4` song song.
   **Thực tế (2026-09-23):** user báo file 60 dòng chạy tới ~dòng 40 thì
   server trả lỗi `rate_limit_exceeded` — mức ~2000 không phải giới hạn duy
   nhất (có thể có limit riêng theo phút/theo số task TTS, chưa rõ). Đã thêm
@@ -250,6 +248,7 @@ TTS-AU/
 │   │   ├── services/
 │   │   │   ├── genvoiceApi.ts     # MỌI call tới GenVoice API
 │   │   │   ├── secureStore.ts     # lưu API key qua safeStorage + JSON file
+│   │   │   ├── jobStateStore.ts   # lưu/đọc job dở (current-job.json) + tìm file output cũ
 │   │   │   ├── textSplitter.ts    # autoSplitText (theo dấu câu) + extractLinesFromFileContent (.srt/.txt/.dgt)
 │   │   │   ├── ffmpegService.ts   # join mp3 + lấy duration, tự resolve path app.asar.unpacked
 │   │   │   └── srtService.ts      # build nội dung .srt từ danh sách đoạn + duration
@@ -462,25 +461,28 @@ GitHub Releases, có auto-update, icon theo ảnh user cung cấp — xem mục 
 v0.1.0 → v0.1.1 qua GitHub Releases, và auto-update thật (app v0.1.0 đã
 cài tự phát hiện + cập nhật lên v0.1.1 thành công — user xác nhận).
 
-**Nâng cấp độ tin cậy — ưu tiên cao** (đề xuất 2026-09-24 sau khi review
-`batchJobQueue.ts`; đều không cần API mới, chỉ dùng `GET /v1/history/{id}`
-đã CONFIRMED):
-4. **Lưu tiến độ job xuống đĩa + chạy tiếp**: hiện job chỉ ở RAM — crash/
-   tắt app/restart giữa chừng là mất `taskId` của các task đã trừ credit
-   (audio vẫn còn trên server 48h). Ghi `job.json` (taskId/status/text từng
-   item) vào `outputDir`, mở app lại thì hỏi chạy tiếp; item đã có
-   `taskId` chỉ poll + tải, không submit lại.
-5. **Không bỏ task đã submit khi Stop/timeout poll (120s)**: hiện item bị
-   đánh `error` dù credit đã trừ. Giữ `taskId`, trạng thái "Chưa tải",
-   nút "Tải lại" chỉ gọi lại `GET /v1/history/{id}`.
-6. **Không join lặng lẽ khi group có đoạn lỗi**: `joinAndMaybeWriteSrt`
-   chỉ lấy item `done` → file ghép thiếu câu mà không báo. Bỏ qua join
-   (hoặc đặt tên `*.INCOMPLETE.mp3`) + báo rõ trên UI.
-7. **Nút "Chạy lại các đoạn lỗi"**: submit lại chỉ item `error`/`skipped`,
-   giữ các `00X.mp3` đã xong, rồi join lại.
-8. **File cũ lẫn trong output folder**: chạy lại với ít đoạn hơn thì
-   `0XX.mp3` cũ vẫn nằm đó — hỏi trước khi ghi đè hoặc dọn folder.
-9. **`downloadFile` thêm timeout + retry**, ghi ra `.part` rồi đổi tên.
+**Nâng cấp độ tin cậy — ĐÃ LÀM (2026-09-24, chưa phát hành, chưa test
+với credit thật; đã test 25 kịch bản bằng mock GenVoice server + ffmpeg
+thật):**
+4. **Lưu tiến độ job + Chạy tiếp**: `jobStateStore.ts` ghi
+   `userData/current-job.json` (config + items kèm `taskId`, KHÔNG có API
+   key) sau mỗi thay đổi (ghi file tạm rồi rename). Mở app thấy job dở →
+   toolbar hiện "Job trước còn X/Y đoạn chưa xong · ↻ Chạy tiếp · Bỏ".
+   Chạy tiếp dùng lại voice/settings GỐC của job; item `done` còn file thì
+   giữ, item có `taskId` chỉ poll + tải (không POST lại), còn lại submit.
+   Job xong hết thì xoá file trạng thái. Chỉ giữ 1 job gần nhất — Start
+   job mới khi còn job dở sẽ hỏi xác nhận.
+5. **Trạng thái `interrupted` ("Chưa tải xong")**: lỗi SAU khi đã có
+   `taskId` (Stop, timeout poll, mất mạng) giữ `taskId`. Lỗi "chắc chắn"
+   (server trả status khác `completed`, hoặc tải audio bị 404/410 = hết
+   hạn 48h — ASSUMPTION về status code) xoá `taskId` → lần sau submit mới.
+6. **Group còn đoạn chưa xong thì KHÔNG ghép**; `BatchProgressEvent.incompleteGroups`
+   báo tên group, toolbar hiện "Chưa ghép X vì còn đoạn lỗi".
+7. "Chạy lại các đoạn lỗi" = cùng nút "Chạy tiếp" ở trên.
+8. **Start job mới mà thư mục output có file cũ do app tạo** (`001.mp3`...,
+   `.part`, `<tên>.mp3/.srt`) → hộp thoại native hỏi xoá; chỉ khớp đúng
+   pattern đó, không đụng file khác của user.
+9. `downloadFile`: timeout 60s, thử 3 lần, ghi `.part` rồi rename.
 
 **Nâng cấp khác:**
 10. Cho chỉnh `CONCURRENCY` qua UI (hiện hard-code 4), mặc định thấp hơn

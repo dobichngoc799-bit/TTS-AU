@@ -5,13 +5,16 @@ import { BatchJobPanel } from './components/BatchJobPanel'
 import { JobQueueTable } from './components/JobQueueTable'
 import { ActionToolbar } from './components/ActionToolbar'
 import { useSettingsStore } from './store/settingsStore'
+import { useJobStore } from './store/jobStore'
 
 function App(): React.JSX.Element {
   const init = useSettingsStore((s) => s.init)
+  const loadSavedJob = useJobStore((s) => s.loadSavedJob)
 
   useEffect(() => {
     init()
-  }, [init])
+    loadSavedJob()
+  }, [init, loadSavedJob])
 
   return (
     <div className="flex h-full w-full flex-col bg-[#eef0f4]">

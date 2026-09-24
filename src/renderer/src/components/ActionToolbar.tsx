@@ -18,9 +18,21 @@ export function ActionToolbar(): React.JSX.Element {
     joinAudio,
     joinGapSeconds,
     sourceLines,
-    importedGroups
+    importedGroups,
+    savedJob,
+    resume,
+    discardSavedJob,
+    incompleteGroups
   } = useJobStore()
   const [error, setError] = useState<string | null>(null)
+
+  // Job dở: đoạn chưa xong + phần credit sẽ tốn khi Chạy tiếp (chỉ các đoạn
+  // chưa có taskId — đoạn đã có taskId chỉ tải lại, không trừ credit nữa).
+  const savedUnfinished = savedJob?.items.filter((i) => i.status !== 'done') ?? []
+  const resumeCredits = savedUnfinished
+    .filter((i) => !i.taskId)
+    .reduce((sum, i) => sum + i.sourceText.length, 0)
+  const resumeInsufficient = account != null && resumeCredits > account.credit_balance
 
   const totalLineCount = sourceLines.length + importedGroups.reduce((sum, g) => sum + g.lines.length, 0)
 
@@ -65,8 +77,44 @@ export function ActionToolbar(): React.JSX.Element {
     }
   }
 
+  async function handleResume(): Promise<void> {
+    if (!apiKey) return
+    setError(null)
+    try {
+      await resume(apiKey)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      refreshAccount()
+    }
+  }
+
+  async function handleDiscard(): Promise<void> {
+    const ok = window.confirm(
+      `Bỏ job cũ? ${savedUnfinished.length} đoạn chưa xong sẽ không chạy tiếp được nữa` +
+        (savedUnfinished.some((i) => i.taskId)
+          ? ' (các đoạn "Chưa tải xong" đã bị trừ credit).'
+          : '.')
+    )
+    if (!ok) return
+    try {
+      await discardSavedJob()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    }
+  }
+
   async function handleStart(): Promise<void> {
     if (!apiKey) return
+    if (
+      savedJob &&
+      !window.confirm(
+        `Job trước còn ${savedUnfinished.length} đoạn chưa xong. Chạy job mới sẽ bỏ job đó ` +
+          '(không "Chạy tiếp" được nữa). Tiếp tục?'
+      )
+    ) {
+      return
+    }
     setError(null)
     try {
       await start(apiKey, {
@@ -122,6 +170,28 @@ export function ActionToolbar(): React.JSX.Element {
           Ước tính: ~{estimatedCredits.toLocaleString('vi-VN')} credit
           {account && ` (còn ${account.credit_balance.toLocaleString('vi-VN')})`}
           {insufficientCredits && ' — KHÔNG ĐỦ CREDIT, không thể Start'}
+        </span>
+      )}
+      {savedJob && !running && (
+        <span className="flex items-center gap-2 rounded-lg bg-amber-50 px-2.5 py-1 text-xs text-amber-700">
+          Job trước còn {savedUnfinished.length}/{savedJob.items.length} đoạn chưa xong
+          <button
+            className="rounded-md bg-amber-500 px-2.5 py-1 font-semibold text-white transition-colors hover:bg-amber-600 disabled:cursor-not-allowed disabled:bg-gray-300"
+            disabled={!apiKey || resumeInsufficient}
+            title={`Dùng lại giọng/settings của job đó. Tốn thêm ~${resumeCredits.toLocaleString('vi-VN')} credit (đoạn "Chưa tải xong" không tốn thêm).`}
+            onClick={handleResume}
+          >
+            ↻ Chạy tiếp
+          </button>
+          <button className="text-amber-700 underline hover:text-amber-900" onClick={handleDiscard}>
+            Bỏ
+          </button>
+          {resumeInsufficient && <span className="font-medium text-red-600">Không đủ credit</span>}
+        </span>
+      )}
+      {incompleteGroups.length > 0 && !running && (
+        <span className="text-xs font-medium text-red-500">
+          Chưa ghép {incompleteGroups.join(', ')} vì còn đoạn lỗi
         </span>
       )}
       {error && <span className="text-xs font-medium text-red-500">{error}</span>}

@@ -4,7 +4,9 @@ import type {
   BatchJobConfig,
   BatchProgressEvent,
   ImportedFileGroup,
+  BatchStartResult,
   JobItem,
+  SavedBatchJob,
   VoiceSettings
 } from '@shared/types'
 import { DEFAULT_AUTO_SPLIT_DELIMITERS, DEFAULT_JOIN_GAP_SECONDS } from '@shared/types'
@@ -38,6 +40,11 @@ interface JobState {
   processing: number
   total: number
   elapsedMs: number
+  // Tên các group không được ghép ở lần chạy vừa xong vì còn đoạn chưa xong.
+  incompleteGroups: string[]
+  // Job đã lưu trên đĩa còn đoạn chưa xong (lỗi / chưa tải / chưa chạy) —
+  // null nếu job gần nhất đã xong hết.
+  savedJob: SavedBatchJob | null
 
   unsubscribeProgress: (() => void) | null
 
@@ -70,6 +77,9 @@ interface JobState {
     }
   ) => Promise<void>
   stop: () => Promise<void>
+  resume: (apiKey: string) => Promise<void>
+  loadSavedJob: () => Promise<void>
+  discardSavedJob: () => Promise<void>
 }
 
 let importedGroupSeq = 0
@@ -107,6 +117,8 @@ export const useJobStore = create<JobState>((set, get) => ({
   processing: 0,
   total: 0,
   elapsedMs: 0,
+  incompleteGroups: [],
+  savedJob: null,
 
   unsubscribeProgress: null,
 
@@ -209,29 +221,8 @@ export const useJobStore = create<JobState>((set, get) => ({
       })
     }
 
-    get().unsubscribeProgress?.()
-    const unsubscribe = window.api.batchJob.onProgress((event: BatchProgressEvent) => {
-      set({
-        items: event.items,
-        done: event.done,
-        processing: event.processing,
-        total: event.total,
-        elapsedMs: event.elapsedMs,
-        running: !event.finished
-      })
-    })
-
-    set({
-      running: true,
-      unsubscribeProgress: unsubscribe,
-      items: [],
-      done: 0,
-      processing: 0,
-      total: items.length
-    })
-
-    try {
-      await window.api.batchJob.start(apiKey, {
+    await runWithProgress(set, get, () =>
+      window.api.batchJob.start(apiKey, {
         voiceId: cfg.voiceId,
         modelId: cfg.modelId,
         languageCode: cfg.languageCode,
@@ -243,14 +234,79 @@ export const useJobStore = create<JobState>((set, get) => ({
         groups,
         items
       })
-    } finally {
-      set({ running: false })
-      get().unsubscribeProgress?.()
-      set({ unsubscribeProgress: null })
-    }
+    )
   },
 
   stop: async () => {
     await window.api.batchJob.stop()
+  },
+
+  resume: async (apiKey) => {
+    await runWithProgress(set, get, () => window.api.batchJob.resume(apiKey))
+  },
+
+  // Gọi lúc mở app + sau mỗi lần chạy. Có job dở thì hiện luôn các đoạn của
+  // job đó trong bảng để user thấy đoạn nào lỗi/chưa tải trước khi Chạy tiếp.
+  loadSavedJob: async () => {
+    const saved = await window.api.batchJob.getSaved()
+    const unfinished = saved?.items.some((i) => i.status !== 'done') ? saved : null
+    set({ savedJob: unfinished })
+    if (unfinished && !get().running && get().items.length === 0) {
+      set({
+        items: unfinished.items,
+        done: unfinished.items.filter((i) => i.status === 'done').length,
+        processing: 0,
+        total: unfinished.items.length,
+        elapsedMs: 0
+      })
+    }
+  },
+
+  discardSavedJob: async () => {
+    await window.api.batchJob.discardSaved()
+    set({ savedJob: null, items: [], done: 0, processing: 0, total: 0, elapsedMs: 0 })
   }
 }))
+
+type SetState = (partial: Partial<JobState>) => void
+
+// Đăng ký nhận progress, chạy job (mới hoặc chạy tiếp), dọn dẹp và đọc lại
+// job đã lưu khi xong. User bấm Huỷ ở hộp thoại xoá file cũ → trả bảng về
+// như trước khi bấm.
+async function runWithProgress(
+  set: SetState,
+  get: () => JobState,
+  run: () => Promise<BatchStartResult>
+): Promise<void> {
+  const before = get()
+  const snapshot = {
+    items: before.items,
+    done: before.done,
+    processing: before.processing,
+    total: before.total,
+    elapsedMs: before.elapsedMs
+  }
+
+  before.unsubscribeProgress?.()
+  const unsubscribe = window.api.batchJob.onProgress((event: BatchProgressEvent) => {
+    set({
+      items: event.items,
+      done: event.done,
+      processing: event.processing,
+      total: event.total,
+      elapsedMs: event.elapsedMs,
+      running: !event.finished,
+      ...(event.finished ? { incompleteGroups: event.incompleteGroups ?? [] } : {})
+    })
+  })
+  set({ running: true, unsubscribeProgress: unsubscribe, incompleteGroups: [] })
+
+  try {
+    const result = await run()
+    if (result.cancelled) set(snapshot)
+  } finally {
+    get().unsubscribeProgress?.()
+    set({ running: false, unsubscribeProgress: null })
+    await get().loadSavedJob()
+  }
+}

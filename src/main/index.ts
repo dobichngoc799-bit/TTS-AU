@@ -7,8 +7,14 @@ import * as genvoiceApi from './services/genvoiceApi'
 import * as secureStore from './services/secureStore'
 import { initAutoUpdater } from './services/updateService'
 import { autoSplitText, extractLinesFromFileContent } from './services/textSplitter'
+import * as jobStateStore from './services/jobStateStore'
 import { BatchJobRunner } from './queue/batchJobQueue'
-import type { BatchJobConfig, ImportedFileGroup } from '../shared/types'
+import type {
+  BatchJobConfig,
+  BatchStartResult,
+  ImportedFileGroup,
+  JobItem
+} from '../shared/types'
 
 // Đọc 1 file import + tính sẵn outputDir (folder mới cùng tên, cạnh file gốc)
 // và outputBaseName (tên file không đuôi) — xem ImportedFileGroup.
@@ -145,19 +151,86 @@ function registerIpcHandlers(): void {
   )
 
   // --- Batch job ---
-  ipcMain.handle('batchJob:start', async (event, apiKey: string, job: BatchJobConfig) => {
+  // Chạy 1 job (mới hoặc đã lưu) + ghi trạng thái xuống đĩa sau mỗi thay
+  // đổi. Xong hết mọi đoạn thì xoá file trạng thái; còn đoạn chưa xong thì
+  // giữ lại để "Chạy tiếp".
+  async function runJob(
+    sender: Electron.WebContents,
+    apiKey: string,
+    job: BatchJobConfig,
+    items: JobItem[],
+    createdAt: number
+  ): Promise<void> {
     if (activeRunner) {
       throw new Error('Đã có 1 batch job đang chạy — bấm Stop trước khi chạy job mới.')
     }
-    const sender = event.sender
-    activeRunner = new BatchJobRunner(apiKey, job, (progress) => {
-      sender.send('batchJob:progress', progress)
-    })
+    const persister = jobStateStore.createJobPersister(job, createdAt)
+    activeRunner = new BatchJobRunner(
+      apiKey,
+      job,
+      items,
+      (progress) => sender.send('batchJob:progress', progress),
+      persister.persist
+    )
     try {
-      await activeRunner.run()
+      const result = await activeRunner.run()
+      await persister.flush()
+      if (result.every((i) => i.status === 'done')) await jobStateStore.clearSavedJob()
     } finally {
+      await persister.flush()
       activeRunner = null
     }
+  }
+
+  ipcMain.handle(
+    'batchJob:start',
+    async (event, apiKey: string, job: BatchJobConfig): Promise<BatchStartResult> => {
+      if (activeRunner) {
+        throw new Error('Đã có 1 batch job đang chạy — bấm Stop trước khi chạy job mới.')
+      }
+      const stale = await jobStateStore.findStaleOutputs(job.groups)
+      if (stale.length > 0) {
+        const win = BrowserWindow.fromWebContents(event.sender)
+        const opts: Electron.MessageBoxOptions = {
+          type: 'warning',
+          buttons: ['Xoá file cũ và chạy', 'Huỷ'],
+          defaultId: 0,
+          cancelId: 1,
+          title: 'Thư mục output đã có audio cũ',
+          message: `Thư mục output đã có ${stale.length} file audio/srt từ lần chạy trước.`,
+          detail:
+            'Nếu giữ lại, file cũ sẽ nằm lẫn với kết quả mới (vd. 045.mp3 của lần trước ' +
+            'khi lần này chỉ có 30 đoạn). Chỉ xoá file do app tạo (001.mp3, 002.mp3..., ' +
+            'file ghép và .srt), không đụng file khác.\n\n' +
+            stale.slice(0, 8).join('\n') +
+            (stale.length > 8 ? `\n... và ${stale.length - 8} file khác` : '')
+        }
+        const { response } = win
+          ? await dialog.showMessageBox(win, opts)
+          : await dialog.showMessageBox(opts)
+        if (response !== 0) return { cancelled: true }
+        await Promise.all(stale.map((p) => fs.unlink(p).catch(() => {})))
+      }
+
+      const items: JobItem[] = job.items.map((i) => ({ ...i, status: 'pending' }))
+      await runJob(event.sender, apiKey, job, items, Date.now())
+      return { cancelled: false }
+    }
+  )
+
+  // Chạy tiếp job đã lưu: item đã xong giữ nguyên, item có taskId chỉ tải
+  // lại, item lỗi/chưa chạy thì submit. Dùng lại đúng voice/settings gốc.
+  ipcMain.handle('batchJob:resume', async (event, apiKey: string): Promise<BatchStartResult> => {
+    const saved = await jobStateStore.loadSavedJob()
+    if (!saved) throw new Error('Không tìm thấy job cũ để chạy tiếp.')
+    await runJob(event.sender, apiKey, saved.config, saved.items, saved.createdAt)
+    return { cancelled: false }
+  })
+
+  ipcMain.handle('batchJob:getSaved', async () => jobStateStore.loadSavedJob())
+  ipcMain.handle('batchJob:discardSaved', async () => {
+    if (activeRunner) throw new Error('Không thể bỏ job khi đang chạy.')
+    await jobStateStore.clearSavedJob()
   })
 
   ipcMain.handle('batchJob:stop', async () => {

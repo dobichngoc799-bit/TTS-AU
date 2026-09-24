@@ -3,8 +3,10 @@ import { electronAPI } from '@electron-toolkit/preload'
 import type {
   BatchJobConfig,
   BatchProgressEvent,
+  BatchStartResult,
   GenvoiceVoice,
-  ImportedFileGroup
+  ImportedFileGroup,
+  SavedBatchJob
 } from '../shared/types'
 
 export interface ListSharedVoicesParams {
@@ -50,8 +52,12 @@ const api = {
       ipcRenderer.invoke('text:extractLines', content, ext)
   },
   batchJob: {
-    start: (apiKey: string, job: BatchJobConfig): Promise<void> =>
+    start: (apiKey: string, job: BatchJobConfig): Promise<BatchStartResult> =>
       ipcRenderer.invoke('batchJob:start', apiKey, job),
+    resume: (apiKey: string): Promise<BatchStartResult> =>
+      ipcRenderer.invoke('batchJob:resume', apiKey),
+    getSaved: (): Promise<SavedBatchJob | null> => ipcRenderer.invoke('batchJob:getSaved'),
+    discardSaved: (): Promise<void> => ipcRenderer.invoke('batchJob:discardSaved'),
     stop: (): Promise<void> => ipcRenderer.invoke('batchJob:stop'),
     onProgress: (callback: (event: BatchProgressEvent) => void): (() => void) => {
       const listener = (_e: Electron.IpcRendererEvent, payload: BatchProgressEvent): void =>
