@@ -21,10 +21,12 @@ hiện tại) — xem mục 5 về khác biệt môi trường giữa 2 máy.
 Đây không phải là port 1:1 — ta giữ lại đúng workflow (chọn giọng → batch job
 → tạo audio hàng loạt → ghép file → xuất SRT) nhưng xây trên stack hiện đại.
 
-**Trạng thái tổng quan (2026-09-15):** MVP đã hoạt động end-to-end thật với
-credit thật trên Windows (generate audio, Auto Split, Join Mp3, import file
-tự tạo folder riêng, chạy song song 4 luồng), UI đã redesign, đã build ra
-bản cài đặt Windows (`.exe`) chạy được. Xem mục 10 cho danh sách việc còn lại.
+**Trạng thái tổng quan (2026-09-24):** bản **v0.1.1** đã phát hành thành
+công lên GitHub Releases và user xác nhận đang chạy ổn (bản cài đặt thật,
+không chỉ `npm run dev`). App hoạt động end-to-end với credit thật trên
+Windows: generate audio, Auto Split, Join Mp3 (có khoảng lặng), import file
+tự tạo folder riêng, chạy song song 4 luồng, tự đợi khi bị rate limit, tự
+cập nhật qua `electron-updater`. Xem mục 10 cho danh sách việc còn lại.
 
 ## 2. GenVoice API — đã xác nhận bằng request thật
 
@@ -39,7 +41,9 @@ của user.
   gốc — GenVoice giữ nguyên convention này).
 - **Rate limit:** có header `x-ratelimit-limit` / `x-ratelimit-remaining` /
   `x-ratelimit-reset` trên mọi response (quan sát được limit ~2000, reset
-  tính theo giây). `batchJobQueue.ts` chạy `CONCURRENCY=4` song song.
+  tính theo giây). `batchJobQueue.ts` chạy `CONCURRENCY=4` song song
+  (comment trong file đó còn ghi "~2000 nên rất an toàn" — đã lỗi thời,
+  xem đoạn dưới).
   **Thực tế (2026-09-23):** user báo file 60 dòng chạy tới ~dòng 40 thì
   server trả lỗi `rate_limit_exceeded` — mức ~2000 không phải giới hạn duy
   nhất (có thể có limit riêng theo phút/theo số task TTS, chưa rõ). Đã thêm
@@ -170,7 +174,7 @@ Import text (file/folder/srt) hoặc gõ tay
 ## 4. Tech stack
 
 - **Shell:** Electron (main process = Node.js, renderer = Chromium).
-- **UI:** React 18 + TypeScript, Vite (qua `electron-vite`) làm build tool.
+- **UI:** React 19 + TypeScript, Vite (qua `electron-vite`) làm build tool.
 - **State management:** Zustand.
 - **Styling:** Tailwind CSS v4. UI đã redesign 2026-09-15 (xem mục 8) — màu
   nhấn indigo, card bo góc + shadow, badge trạng thái, slider custom, cửa
@@ -186,8 +190,7 @@ Import text (file/folder/srt) hoặc gõ tay
 - **HTTP client:** `axios`, bọc trong `genvoiceApi.ts`.
 - **Icon app:** `build/icon.ico` (đa độ phân giải 16→256, PNG-in-ICO),
   `build/icon.png` + `resources/icon.png` (640x640) — ảnh do user cung cấp
-  (đổi ảnh mới 2026-09-23, chưa có trong release v0.1.0 — cần phát hành
-  bản sau). Lưu ý khi kiểm tra: `System.Drawing.Icon` của .NET không đọc
+  (đổi ảnh mới 2026-09-23, đã có từ release v0.1.1). Lưu ý khi kiểm tra: `System.Drawing.Icon` của .NET không đọc
   được entry PNG trong .ico (hiện ra nhiễu) — kiểm tra bằng cách tách từng
   entry ra decode riêng, hoặc `ExtractAssociatedIcon` trên exe đã build. `build/icon.icns` (macOS) **CHƯA cập nhật theo ảnh mới**
   (cần công cụ trên máy Mac để tạo đúng .icns) — không quan trọng vì hiện
@@ -200,8 +203,8 @@ Import text (file/folder/srt) hoặc gõ tay
   công, ra `dist\ttsau-0.1.0-setup.exe` (NSIS) + `dist\win-unpacked\`; mở
   trực tiếp `ttsau-scaffold.exe` xác nhận app chạy được, gọi trực tiếp
   `ffmpeg.exe -version`/`ffprobe.exe -version` từ đúng path unpacked xác
-  nhận cả 2 binary chạy được. **Chưa test**: generate audio + join mp3
-  thật *bằng chính bản đã đóng gói* (chỉ mới verify ở `npm run dev`).
+  nhận cả 2 binary chạy được. Generate audio + join mp3 bằng chính bản
+  đã đóng gói: user xác nhận chạy ổn trên bản v0.1.1 (2026-09-24).
 - **Auto-update:** `electron-updater` đã cài + wire vào
   `src/main/services/updateService.ts` (chỉ chạy khi `app.isPackaged`).
   **Cấu hình 2026-09-23:** `publish` = GitHub Releases repo public
@@ -219,7 +222,10 @@ Import text (file/folder/srt) hoặc gõ tay
   gặp thật khi phát hành v0.1.0 — phải upload tay + sửa lại sha512 trong
   latest.yml). Script cũng chặn nếu release version đó đã có file .exe
   (quên tăng version). **v0.1.0 đã phát hành 2026-09-23**, đã verify tải
-  về qua link public khớp sha512 trong latest.yml. Nếu có batch job đang
+  về qua link public khớp sha512 trong latest.yml. **v0.1.1 đã phát hành
+  2026-09-23** (commit `Release 0.1.1`, chỉ tăng version + icon mới) bằng
+  `npm run release` — lần này không còn lỗi 422. **Auto-update CONFIRMED**
+  (2026-09-24): user cài v0.1.0, app tự cập nhật lên v0.1.1 thành công. Nếu có batch job đang
   chạy khi tải xong update thì không restart (tự cài khi tắt app). Các bản
   build TRƯỚC 2026-09-23 trỏ URL placeholder nên không tự update được —
   phải cài tay 1 lần bản mới.
@@ -369,7 +375,8 @@ schema — xem mục 2.4 để biết chi tiết từng mục):
 - [x] **Import file tự tạo folder + đặt tên theo file gốc** (tính năng mới
       2026-09-15) — xem chi tiết mục 6.
 - [x] Batch job chạy **song song CONCURRENCY=4** (đổi từ tuần tự
-      2026-09-15, an toàn với rate limit ~2000 — mục 2.1), hiển thị
+      2026-09-15; thực tế vẫn có thể dính `rate_limit_exceeded`, đã có
+      tự đợi + thử lại — mục 2.1), hiển thị
       Done/Processing/Total + progress bar + elapsed time —
       `JobQueueTable.tsx` + `batchJobQueue.ts`.
 - [x] Start/Stop giữa chừng.
@@ -400,14 +407,12 @@ không cho resize/maximize (xem mục 9 — lý do).
 gốc lúc scaffold): `Auto Split` = tắt, `Tự động tạo Srt` = tắt, `Join Mp3
 sau khi xong` = bật, `Speaker Boost` = tắt.
 
-**Packaging:** đã build production Windows thật (`ttsau-0.1.0-setup.exe`),
-icon app đã đổi theo ảnh user cung cấp — xem mục 4.
+**Packaging & phát hành:** bản hiện tại là `TTS-V1-0.1.1-setup.exe` trên
+GitHub Releases, có auto-update, icon theo ảnh user cung cấp — xem mục 4.
 
 **Để sau (không phải ưu tiên hiện tại):**
 - Proxy management (mục 3.3) — không cần thiết vì gọi qua GenVoice.
 - Voice Library đồng bộ cloud / phân loại VIP.
-- Publish GitHub Releases + bật auto-update thật (`electron-updater`) —
-  xem mục 4, đang hoãn.
 - Hỗ trợ Dubbing (video) và Studio (multi-scene) của GenVoice — tính năng
   lớn riêng, chỉ làm khi MVP TTS text-to-audio đã ổn định hoàn toàn.
 - macOS: build lại + tạo `build/icon.icns` mới theo ảnh (cần máy Mac).
@@ -450,18 +455,44 @@ icon app đã đổi theo ảnh user cung cấp — xem mục 4.
 1. Test vượt giới hạn ký tự, credit không đủ, `status: failed` thật —
    hiện toàn bộ 3 case này chưa quan sát được lần nào.
 2. Test endpoint MiniMax/CapCut (hiện chỉ verify ElevenLabs).
-3. Generate audio + join mp3 thật bằng **bản đã đóng gói**
-   (`dist\ttsau-0.1.0-setup.exe` hoặc `win-unpacked`) — chỉ mới verify ở
-   `npm run dev`, chưa tự tay bấm thử ở bản production dù code path giống
-   hệt nhau.
+3. Xác nhận HTTP status thật của `rate_limit_exceeded` và ý nghĩa
+   `x-ratelimit-reset` (mục 2.1).
 
-**Việc không cần credit, có thể làm ngay khi quay lại:**
-4. Retry/Delete task per-item trong `JobQueueTable.tsx` (cần biết path
-   API thật trước — mục 2.4).
-5. Cân nhắc cho phép chỉnh `CONCURRENCY` (hiện hard-code 4 trong
-   `batchJobQueue.ts`) qua UI nếu user thấy cần nhanh/chậm hơn.
-6. macOS: build lại `build/icon.icns` theo ảnh icon mới (cần máy Mac).
+**Đã xong (2026-09-24):** chạy thật bằng bản đóng gói, phát hành
+v0.1.0 → v0.1.1 qua GitHub Releases, và auto-update thật (app v0.1.0 đã
+cài tự phát hiện + cập nhật lên v0.1.1 thành công — user xác nhận).
 
-**Auto-update:**
-7. Đã phát hành v0.1.0 lên GitHub Releases (xem mục 4) — còn test update
-   thật: cài v0.1.0, phát hành v0.1.1, mở app xem có hỏi cập nhật không.
+**Nâng cấp độ tin cậy — ưu tiên cao** (đề xuất 2026-09-24 sau khi review
+`batchJobQueue.ts`; đều không cần API mới, chỉ dùng `GET /v1/history/{id}`
+đã CONFIRMED):
+4. **Lưu tiến độ job xuống đĩa + chạy tiếp**: hiện job chỉ ở RAM — crash/
+   tắt app/restart giữa chừng là mất `taskId` của các task đã trừ credit
+   (audio vẫn còn trên server 48h). Ghi `job.json` (taskId/status/text từng
+   item) vào `outputDir`, mở app lại thì hỏi chạy tiếp; item đã có
+   `taskId` chỉ poll + tải, không submit lại.
+5. **Không bỏ task đã submit khi Stop/timeout poll (120s)**: hiện item bị
+   đánh `error` dù credit đã trừ. Giữ `taskId`, trạng thái "Chưa tải",
+   nút "Tải lại" chỉ gọi lại `GET /v1/history/{id}`.
+6. **Không join lặng lẽ khi group có đoạn lỗi**: `joinAndMaybeWriteSrt`
+   chỉ lấy item `done` → file ghép thiếu câu mà không báo. Bỏ qua join
+   (hoặc đặt tên `*.INCOMPLETE.mp3`) + báo rõ trên UI.
+7. **Nút "Chạy lại các đoạn lỗi"**: submit lại chỉ item `error`/`skipped`,
+   giữ các `00X.mp3` đã xong, rồi join lại.
+8. **File cũ lẫn trong output folder**: chạy lại với ít đoạn hơn thì
+   `0XX.mp3` cũ vẫn nằm đó — hỏi trước khi ghi đè hoặc dọn folder.
+9. **`downloadFile` thêm timeout + retry**, ghi ra `.part` rồi đổi tên.
+
+**Nâng cấp khác:**
+10. Cho chỉnh `CONCURRENCY` qua UI (hiện hard-code 4), mặc định thấp hơn
+    và tự giảm khi bị rate limit.
+11. Cảnh báo/tự tách đoạn quá dài trước khi chạy (giới hạn ký tự chưa rõ
+    — mục 2.4).
+12. Cộng dồn `credits_deducted` thật, hiện "đã tiêu X credit" sau job.
+13. Preset voice (voice+model+language+settings), nghe thử giọng, kéo
+    thả file/folder để import.
+14. Test (vitest) cho `textSplitter.ts` + `srtService.ts`; log ra file
+    (che API key); gom emit IPC (~200ms) cho batch lớn.
+15. Build/release bằng GitHub Actions thay vì đặt `GH_TOKEN` local; code
+    signing để tránh cảnh báo SmartScreen.
+16. Retry/Delete task per-item phía server (cần biết path API thật — mục 2.4).
+17. macOS: build lại `build/icon.icns` theo ảnh icon mới (cần máy Mac).
