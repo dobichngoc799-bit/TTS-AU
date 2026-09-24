@@ -21,9 +21,11 @@ hiện tại) — xem mục 5 về khác biệt môi trường giữa 2 máy.
 Đây không phải là port 1:1 — ta giữ lại đúng workflow (chọn giọng → batch job
 → tạo audio hàng loạt → ghép file → xuất SRT) nhưng xây trên stack hiện đại.
 
-**Trạng thái tổng quan (2026-09-24):** bản **v0.1.1** đã phát hành thành
-công lên GitHub Releases và user xác nhận đang chạy ổn (bản cài đặt thật,
-không chỉ `npm run dev`). App hoạt động end-to-end với credit thật trên
+**Trạng thái tổng quan (2026-09-24):** bản mới nhất **v0.1.2** (lưu tiến độ
+job + Chạy tiếp, xem mục 10) đã phát hành lên GitHub Releases. v0.1.1 đã
+được user xác nhận chạy ổn (bản cài đặt thật, không chỉ `npm run dev`).
+`GH_TOKEN` đã đặt sẵn làm biến môi trường cấp User trên máy Windows —
+`npm run release` chạy được trực tiếp, không bao giờ in/ghi token. App hoạt động end-to-end với credit thật trên
 Windows: generate audio, Auto Split, Join Mp3 (có khoảng lặng), import file
 tự tạo folder riêng, chạy song song 4 luồng, tự đợi khi bị rate limit, tự
 cập nhật qua `electron-updater`. Xem mục 10 cho danh sách việc còn lại.
@@ -461,7 +463,7 @@ GitHub Releases, có auto-update, icon theo ảnh user cung cấp — xem mục 
 v0.1.0 → v0.1.1 qua GitHub Releases, và auto-update thật (app v0.1.0 đã
 cài tự phát hiện + cập nhật lên v0.1.1 thành công — user xác nhận).
 
-**Nâng cấp độ tin cậy — ĐÃ LÀM (2026-09-24, chưa phát hành, chưa test
+**Nâng cấp độ tin cậy — ĐÃ LÀM, phát hành trong v0.1.2 (2026-09-24; chưa test
 với credit thật; đã test 25 kịch bản bằng mock GenVoice server + ffmpeg
 thật):**
 4. **Lưu tiến độ job + Chạy tiếp**: `jobStateStore.ts` ghi
