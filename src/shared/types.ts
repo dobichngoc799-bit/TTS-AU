@@ -1,6 +1,35 @@
 // Types shared between main and renderer. Keep this file free of Node/DOM-specific
 // imports so it type-checks under both tsconfig.node.json and tsconfig.web.json.
 
+// Nguồn tạo audio: qua GenVoice (bán credit) hoặc gọi thẳng ElevenLabs bằng
+// API key riêng của user. Mỗi job chỉ dùng 1 nguồn (chọn trước khi Start).
+export type TtsProvider = 'genvoice' | 'elevenlabs'
+
+export const TTS_PROVIDER_LABELS: Record<TtsProvider, string> = {
+  genvoice: 'GenVoice',
+  elevenlabs: 'ElevenLabs'
+}
+
+// Số luồng song song mặc định theo nguồn. ElevenLabs giới hạn số request
+// chạy cùng lúc theo gói (Starter ~3, Creator ~5, Pro ~10...) — vượt thì trả
+// 429, app tự đợi + thử lại, nhưng đặt đúng thì nhanh hơn.
+export const DEFAULT_CONCURRENCY: Record<TtsProvider, number> = {
+  genvoice: 4,
+  elevenlabs: 3
+}
+
+// Thông tin tài khoản đã chuẩn hoá cho cả 2 nguồn — UI chỉ cần biết còn bao
+// nhiêu "đơn vị" (credit GenVoice / ký tự ElevenLabs) để ước tính trước job.
+export interface AccountInfo {
+  provider: TtsProvider
+  label: string // email (GenVoice) hoặc "Gói <tier>" (ElevenLabs)
+  // null = không đọc được số dư (vd. API key ElevenLabs bị giới hạn quyền
+  // user_read) — khi đó không chặn Start theo số dư.
+  remaining: number | null
+  limit?: number
+  unit: string // "credit" | "ký tự"
+}
+
 export interface GenvoiceAccount {
   id: string
   email: string
@@ -20,6 +49,8 @@ export interface GenvoiceModel {
   can_use_style: boolean
   can_use_speaker_boost: boolean
   can_be_finetuned: boolean
+  // Chỉ ElevenLabs gốc trả field này — danh sách ngôn ngữ model hỗ trợ.
+  languages?: { language_id: string; name: string }[]
   [key: string]: unknown
 }
 
@@ -113,8 +144,14 @@ export interface BatchGroup {
 }
 
 export interface BatchJobConfig {
+  // Không có ở job lưu từ bản cũ (trước khi hỗ trợ ElevenLabs) → coi là 'genvoice'.
+  provider?: TtsProvider
+  // Số item chạy song song. Không có → DEFAULT_CONCURRENCY theo provider.
+  concurrency?: number
   voiceId: string
   modelId: string
+  // ElevenLabs: '' = không gửi language_code (tự nhận diện) — nhiều model
+  // ElevenLabs báo lỗi nếu gửi language_code.
   languageCode: string
   voiceSettingsEnabled: boolean
   voiceSettings: VoiceSettings

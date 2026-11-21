@@ -7,9 +7,14 @@ import type {
   BatchStartResult,
   JobItem,
   SavedBatchJob,
+  TtsProvider,
   VoiceSettings
 } from '@shared/types'
-import { DEFAULT_AUTO_SPLIT_DELIMITERS, DEFAULT_JOIN_GAP_SECONDS } from '@shared/types'
+import {
+  DEFAULT_AUTO_SPLIT_DELIMITERS,
+  DEFAULT_CONCURRENCY,
+  DEFAULT_JOIN_GAP_SECONDS
+} from '@shared/types'
 
 // 1 file import (.txt/.srt/.dgt) = 1 group riêng, tự ghép + đặt tên theo file
 // gốc (outputDir/outputBaseName main process đã tính sẵn — xem
@@ -33,6 +38,8 @@ interface JobState {
   autoGenerateSrt: boolean
   joinAudio: boolean
   joinGapSeconds: number
+  // Số luồng song song, nhớ riêng cho từng nguồn (giới hạn khác nhau).
+  concurrency: Record<TtsProvider, number>
 
   running: boolean
   items: JobItem[]
@@ -58,10 +65,13 @@ interface JobState {
   setAutoGenerateSrt: (enabled: boolean) => void
   setJoinAudio: (enabled: boolean) => void
   setJoinGapSeconds: (seconds: number) => void
+  setConcurrency: (provider: TtsProvider, value: number) => void
 
   start: (
     apiKey: string,
     cfg: {
+      provider: TtsProvider
+      concurrency: number
       voiceId: string
       modelId: string
       languageCode: string
@@ -77,7 +87,7 @@ interface JobState {
     }
   ) => Promise<void>
   stop: () => Promise<void>
-  resume: (apiKey: string) => Promise<void>
+  resume: () => Promise<void>
   loadSavedJob: () => Promise<void>
   discardSavedJob: () => Promise<void>
 }
@@ -110,6 +120,7 @@ export const useJobStore = create<JobState>((set, get) => ({
   autoGenerateSrt: false,
   joinAudio: true,
   joinGapSeconds: DEFAULT_JOIN_GAP_SECONDS,
+  concurrency: { ...DEFAULT_CONCURRENCY },
 
   running: false,
   items: [],
@@ -193,6 +204,14 @@ export const useJobStore = create<JobState>((set, get) => ({
   setJoinGapSeconds: (seconds) =>
     set({ joinGapSeconds: Number.isFinite(seconds) ? Math.min(10, Math.max(0, seconds)) : 0 }),
 
+  setConcurrency: (provider, value) =>
+    set((state) => ({
+      concurrency: {
+        ...state.concurrency,
+        [provider]: Number.isFinite(value) ? Math.min(20, Math.max(1, Math.round(value))) : 1
+      }
+    })),
+
   start: async (apiKey, cfg) => {
     const { sourceLines, importedGroups } = get()
     if (sourceLines.length === 0 && importedGroups.length === 0) {
@@ -223,6 +242,8 @@ export const useJobStore = create<JobState>((set, get) => ({
 
     await runWithProgress(set, get, () =>
       window.api.batchJob.start(apiKey, {
+        provider: cfg.provider,
+        concurrency: cfg.concurrency,
         voiceId: cfg.voiceId,
         modelId: cfg.modelId,
         languageCode: cfg.languageCode,
@@ -241,8 +262,8 @@ export const useJobStore = create<JobState>((set, get) => ({
     await window.api.batchJob.stop()
   },
 
-  resume: async (apiKey) => {
-    await runWithProgress(set, get, () => window.api.batchJob.resume(apiKey))
+  resume: async () => {
+    await runWithProgress(set, get, () => window.api.batchJob.resume())
   },
 
   // Gọi lúc mở app + sau mỗi lần chạy. Có job dở thì hiện luôn các đoạn của

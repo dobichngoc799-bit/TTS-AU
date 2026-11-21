@@ -2,8 +2,10 @@ import { promises as fs } from 'fs'
 import { join } from 'path'
 import axios from 'axios'
 import * as genvoiceApi from '../services/genvoiceApi'
+import * as elevenlabsApi from '../services/elevenlabsApi'
 import { getAudioDurationMs, joinMp3Files } from '../services/ffmpegService'
 import { buildSrt } from '../services/srtService'
+import { DEFAULT_CONCURRENCY } from '../../shared/types'
 import type { BatchGroup, BatchJobConfig, BatchProgressEvent, JobItem } from '../../shared/types'
 
 export type ProgressCallback = (event: BatchProgressEvent) => void
@@ -23,8 +25,12 @@ class ItemFailedError extends Error {}
 // `items` có thể là job mới (toàn 'pending') hoặc job đã lưu (Chạy tiếp /
 // chạy lại đoạn lỗi): item 'done' còn file thì giữ nguyên, item có taskId thì
 // chỉ poll + tải lại, không submit lần 2.
+//
+// Nguồn ElevenLabs (job.provider === 'elevenlabs'): mỗi item gọi 1 request
+// trả thẳng mp3 — không có taskId nên item lỗi giữa chừng chạy lại sẽ tạo
+// audio mới (tốn ký tự lần nữa).
 export class BatchJobRunner {
-  private static readonly CONCURRENCY = 4 // xem CLAUDE.md mục 2.1 về rate limit
+  private static readonly MAX_CONCURRENCY = 20
   private static readonly DOWNLOAD_TIMEOUT_MS = 60_000
   private static readonly DOWNLOAD_ATTEMPTS = 3
 
@@ -78,7 +84,12 @@ export class BatchJobRunner {
         this.emit(false)
       }
     }
-    const workerCount = Math.min(BatchJobRunner.CONCURRENCY, queue.length)
+    const provider = this.job.provider ?? 'genvoice'
+    const concurrency = Math.min(
+      BatchJobRunner.MAX_CONCURRENCY,
+      Math.max(1, Math.floor(this.job.concurrency ?? DEFAULT_CONCURRENCY[provider]))
+    )
+    const workerCount = Math.min(concurrency, queue.length)
     await Promise.all(Array.from({ length: workerCount }, () => worker()))
 
     for (const item of items) {
@@ -121,6 +132,11 @@ export class BatchJobRunner {
           this.emit(false)
         }
       }, waitMs)
+    }
+
+    if (this.job.provider === 'elevenlabs') {
+      await this.processElevenlabsItem(item, group, signal, onRateLimited)
+      return
     }
 
     try {
@@ -176,6 +192,48 @@ export class BatchJobRunner {
         item.status = 'error'
         item.errorMessage = message
       }
+    }
+  }
+
+  // ElevenLabs trả thẳng bytes mp3 trong response. Request đang chạy khi user
+  // bấm Stop vẫn được đợi xong và lưu lại (ký tự đã bị tính rồi) — Stop chỉ
+  // ngắt lúc đang đợi rate limit và không lấy item mới.
+  private async processElevenlabsItem(
+    item: JobItem,
+    group: BatchGroup,
+    signal: { aborted: boolean },
+    onRateLimited: (waitMs: number) => void
+  ): Promise<void> {
+    try {
+      item.status = 'submitting'
+      this.emit(false)
+      const { audio, charactersUsed } = await elevenlabsApi.synthesize(
+        this.apiKey,
+        {
+          voiceId: this.job.voiceId,
+          text: item.sourceText,
+          modelId: this.job.modelId,
+          languageCode: this.job.languageCode,
+          voiceSettings: this.job.voiceSettingsEnabled ? this.job.voiceSettings : undefined
+        },
+        { signal, onRateLimited }
+      )
+      const outputPath = join(group.outputDir, `${String(item.index + 1).padStart(3, '0')}.mp3`)
+      const partPath = `${outputPath}.part`
+      await fs.writeFile(partPath, audio)
+      await fs.rename(partPath, outputPath)
+
+      item.outputAudioPath = outputPath
+      item.creditsDeducted = charactersUsed
+      item.durationMs = await getAudioDurationMs(outputPath)
+      item.status = 'done'
+    } catch (err) {
+      item.status = 'error'
+      item.errorMessage = this.stopped
+        ? 'Đã dừng — bấm "Chạy tiếp" để tạo đoạn này'
+        : err instanceof Error
+          ? err.message
+          : String(err)
     }
   }
 

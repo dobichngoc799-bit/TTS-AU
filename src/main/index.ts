@@ -3,7 +3,7 @@ import { join, dirname, basename } from 'path'
 import { promises as fs } from 'fs'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
-import * as genvoiceApi from './services/genvoiceApi'
+import * as ttsProviders from './services/ttsProviders'
 import * as secureStore from './services/secureStore'
 import { initAutoUpdater } from './services/updateService'
 import { autoSplitText, extractLinesFromFileContent } from './services/textSplitter'
@@ -13,8 +13,10 @@ import type {
   BatchJobConfig,
   BatchStartResult,
   ImportedFileGroup,
-  JobItem
+  JobItem,
+  TtsProvider
 } from '../shared/types'
+import { TTS_PROVIDER_LABELS } from '../shared/types'
 
 // Đọc 1 file import + tính sẵn outputDir (folder mới cùng tên, cạnh file gốc)
 // và outputBaseName (tên file không đuôi) — xem ImportedFileGroup.
@@ -74,28 +76,44 @@ function createWindow(): void {
 }
 
 function registerIpcHandlers(): void {
-  // --- Settings / API key ---
-  ipcMain.handle('settings:getApiKey', async () => secureStore.loadApiKey())
-  ipcMain.handle('settings:setApiKey', async (_e, apiKey: string) => {
-    await secureStore.saveApiKey(apiKey)
+  // --- Settings / API key (lưu riêng theo từng nguồn) ---
+  ipcMain.handle('settings:getProvider', async () => secureStore.loadProvider())
+  ipcMain.handle('settings:setProvider', async (_e, provider: TtsProvider) =>
+    secureStore.saveProvider(provider)
+  )
+  ipcMain.handle('settings:getApiKey', async (_e, provider: TtsProvider) =>
+    secureStore.loadApiKey(provider)
+  )
+  ipcMain.handle('settings:setApiKey', async (_e, provider: TtsProvider, apiKey: string) => {
+    await secureStore.saveApiKey(provider, apiKey)
   })
-  ipcMain.handle('settings:clearApiKey', async () => secureStore.clearApiKey())
+  ipcMain.handle('settings:clearApiKey', async (_e, provider: TtsProvider) =>
+    secureStore.clearApiKey(provider)
+  )
   ipcMain.handle('settings:getOutputDir', async () => secureStore.loadOutputDir())
   ipcMain.handle('settings:setOutputDir', async (_e, dir: string) => secureStore.saveOutputDir(dir))
 
-  // --- GenVoice read-only lookups ---
-  ipcMain.handle('genvoice:getAccount', async (_e, apiKey: string) => genvoiceApi.getAccount(apiKey))
-  ipcMain.handle('genvoice:listModels', async (_e, apiKey: string) => genvoiceApi.listModels(apiKey))
-  ipcMain.handle('genvoice:listLanguages', async (_e, apiKey: string) =>
-    genvoiceApi.listLanguages(apiKey)
+  // --- Lookup read-only (GenVoice hoặc ElevenLabs tuỳ provider) ---
+  ipcMain.handle('tts:getAccount', async (_e, provider: TtsProvider, apiKey: string) =>
+    ttsProviders.getAccount(provider, apiKey)
   )
-  ipcMain.handle('genvoice:listDefaultVoices', async (_e, apiKey: string) =>
-    genvoiceApi.listDefaultVoices(apiKey)
+  ipcMain.handle('tts:listModels', async (_e, provider: TtsProvider, apiKey: string) =>
+    ttsProviders.listModels(provider, apiKey)
+  )
+  ipcMain.handle('tts:listLanguages', async (_e, provider: TtsProvider, apiKey: string) =>
+    ttsProviders.listLanguages(provider, apiKey)
+  )
+  ipcMain.handle('tts:listDefaultVoices', async (_e, provider: TtsProvider, apiKey: string) =>
+    ttsProviders.listDefaultVoices(provider, apiKey)
   )
   ipcMain.handle(
-    'genvoice:listSharedVoices',
-    async (_e, apiKey: string, params: genvoiceApi.ListSharedVoicesParams) =>
-      genvoiceApi.listSharedVoices(apiKey, params)
+    'tts:listSharedVoices',
+    async (
+      _e,
+      provider: TtsProvider,
+      apiKey: string,
+      params: ttsProviders.ListSharedVoicesParams
+    ) => ttsProviders.listSharedVoices(provider, apiKey, params)
   )
 
   // --- File / folder dialogs ---
@@ -219,10 +237,19 @@ function registerIpcHandlers(): void {
   )
 
   // Chạy tiếp job đã lưu: item đã xong giữ nguyên, item có taskId chỉ tải
-  // lại, item lỗi/chưa chạy thì submit. Dùng lại đúng voice/settings gốc.
-  ipcMain.handle('batchJob:resume', async (event, apiKey: string): Promise<BatchStartResult> => {
+  // lại, item lỗi/chưa chạy thì submit. Dùng lại đúng voice/settings gốc và
+  // đúng nguồn gốc — key lấy từ secureStore theo nguồn của job, không phụ
+  // thuộc nguồn đang chọn trên UI.
+  ipcMain.handle('batchJob:resume', async (event): Promise<BatchStartResult> => {
     const saved = await jobStateStore.loadSavedJob()
     if (!saved) throw new Error('Không tìm thấy job cũ để chạy tiếp.')
+    const provider = saved.config.provider ?? 'genvoice'
+    const apiKey = await secureStore.loadApiKey(provider)
+    if (!apiKey) {
+      throw new Error(
+        `Job này chạy bằng ${TTS_PROVIDER_LABELS[provider]} — nhập API key ${TTS_PROVIDER_LABELS[provider]} trước khi chạy tiếp.`
+      )
+    }
     await runJob(event.sender, apiKey, saved.config, saved.items, saved.createdAt)
     return { cancelled: false }
   })

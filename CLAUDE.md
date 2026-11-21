@@ -21,7 +21,10 @@ hiện tại) — xem mục 5 về khác biệt môi trường giữa 2 máy.
 Đây không phải là port 1:1 — ta giữ lại đúng workflow (chọn giọng → batch job
 → tạo audio hàng loạt → ghép file → xuất SRT) nhưng xây trên stack hiện đại.
 
-**Trạng thái tổng quan (2026-09-24):** bản mới nhất **v0.1.2** (lưu tiến độ
+**Trạng thái tổng quan (2026-11-21):** bản mới nhất **v0.1.3** — thêm nguồn
+**ElevenLabs gốc** (dùng API key ElevenLabs riêng, chọn nguồn ở thanh trên
+cùng, xem mục 2.5) + ô "Số luồng". User đã test bằng key ElevenLabs thật qua
+`npm run dev` và xác nhận chạy ổn trước khi phát hành. v0.1.2 (lưu tiến độ
 job + Chạy tiếp, xem mục 10) đã phát hành lên GitHub Releases. v0.1.1 đã
 được user xác nhận chạy ổn (bản cài đặt thật, không chỉ `npm run dev`).
 `GH_TOKEN` đã đặt sẵn làm biến môi trường cấp User trên máy Windows —
@@ -135,6 +138,42 @@ schema rồi code cứng. Cô lập toàn bộ logic gọi GenVoice API trong
 `src/main/services/genvoiceApi.ts` để khi cần sửa/bổ sung theo kết quả test
 thật, chỉ sửa một chỗ. Đánh dấu rõ trong code (`// ASSUMPTION`) ở bất kỳ chỗ
 nào dựa trên suy đoán thay vì response đã xác nhận ở trên.
+
+### 2.5 Nguồn ElevenLabs gốc (thêm 2026-11-21, phát hành v0.1.3)
+
+**User đã test bằng key thật (gói trả phí) qua `npm run dev` và xác nhận
+"OK"** (2026-11-21) — chưa bóc tách từng điểm dưới đây đã được kiểm chứng
+riêng hay chưa (lỗi quota, 429, voice Library chưa thêm...), nên vẫn giữ nhãn
+ASSUMPTION trong code cho các nhánh lỗi.
+
+User (gói ElevenLabs trả phí) muốn dùng thẳng API key ElevenLabs, chọn nguồn
+ở thanh trên cùng (GenVoice / ElevenLabs). Mỗi job chỉ dùng 1 nguồn. Code:
+`src/main/services/elevenlabsApi.ts` (mọi call ElevenLabs),
+`ttsProviders.ts` (chọn API theo nguồn cho lookup), `rateLimit.ts` (tự
+đợi 429 dùng chung). Viết theo tài liệu công khai của ElevenLabs, đã test 10
+kịch bản bằng mock server — mọi điểm dưới đây là ASSUMPTION tới khi test thật:
+- Base `https://api.elevenlabs.io`, header `xi-api-key`.
+- Số dư: `GET /v1/user/subscription` (`character_limit - character_count`).
+  Key bị giới hạn quyền (401 `missing_permissions`) vẫn chấp nhận nếu gọi
+  được `/v1/models`, chỉ không hiện số dư và không chặn Start theo số dư.
+- Voice: `GET /v1/voices` (My Voices, hiện sẵn) + `GET /v1/shared-voices`
+  (tìm trong Library). Voice Library chưa thêm vào tài khoản có thể không
+  dùng được qua API — lỗi `voice_not_found` có gợi ý.
+- Ngôn ngữ: gộp field `languages` của các model; UI lọc theo model đang
+  chọn, mặc định "Tự nhận diện" = KHÔNG gửi `language_code` (nhiều model
+  báo lỗi nếu gửi).
+- Tạo audio: `POST /v1/text-to-speech/{voice_id}?output_format=mp3_44100_128`
+  trả thẳng bytes mp3 (không task/poll). Ký tự đã tính đọc từ header
+  `x-character-count`, không có thì lấy độ dài text.
+- Không có taskId → item lỗi/dừng giữa chừng "Chạy tiếp" sẽ tạo lại (tốn ký
+  tự). Stop không huỷ request đang chạy (đã tính ký tự) mà đợi xong + lưu.
+- 429 (`too_many_concurrent_requests`/`system_busy`) tự đợi + thử lại. Số
+  luồng chỉnh ở Batch Job ("Số luồng", mặc định GenVoice 4 / ElevenLabs 3,
+  nhớ riêng theo nguồn, chưa lưu xuống đĩa).
+- Key lưu riêng theo nguồn trong `settings.json` (`apiKeyEncrypted` = GenVoice,
+  giữ tên cũ; `elevenlabsApiKeyEncrypted`; `provider`). `BatchJobConfig.provider`
+  không có (job lưu từ bản cũ) = `genvoice`. "Chạy tiếp" lấy key từ secureStore
+  theo nguồn của job, không theo nguồn đang chọn trên UI.
 
 ## 3. Phân tích app tham khảo (Dani Media Auto TTS Subtitles 5.10)
 
@@ -408,7 +447,7 @@ không cho resize/maximize (xem mục 9 — lý do).
 gốc lúc scaffold): `Auto Split` = tắt, `Tự động tạo Srt` = tắt, `Join Mp3
 sau khi xong` = bật, `Speaker Boost` = tắt.
 
-**Packaging & phát hành:** bản hiện tại là `TTS-V1-0.1.1-setup.exe` trên
+**Packaging & phát hành:** bản hiện tại là `TTS-V1-0.1.3-setup.exe` trên
 GitHub Releases, có auto-update, icon theo ảnh user cung cấp — xem mục 4.
 
 **Để sau (không phải ưu tiên hiện tại):**
@@ -486,9 +525,26 @@ thật):**
    pattern đó, không đụng file khác của user.
 9. `downloadFile`: timeout 60s, thử 3 lần, ghi `.part` rồi rename.
 
+**Nguồn ElevenLabs (phát hành v0.1.3, 2026-11-21 — mục 2.5):** luồng chính
+user đã xác nhận chạy ổn. Còn nên quan sát thật: lỗi quota, 429 khi vượt số
+luồng của gói, voice Library chưa thêm vào tài khoản. Để sau: SRT chính xác
+bằng `/with-timestamps`, `previous_text`/`next_text` cho giọng liền mạch.
+
+**Docs GenVoice đọc được (2026-11-21):** trang `/docs` là SPA, nhưng nội dung
+nằm trong các chunk JS `https://genvoice.pro/assets/<tên-endpoint>-<hash>.js`
+(danh sách trong chunk `PublicAPIDocs-*.js`, tên hash đổi theo mỗi lần
+deploy). Điểm mới so với code hiện tại — user quyết định CHƯA làm vì đã chuyển
+sang dùng key ElevenLabs: (a) lỗi 5xx có field `message` cạnh `error`, vd
+`provider_under_maintenance` (web hiện "Provider Maintenance"); (b) `eleven_v3`
+(model mặc định của web) chỉ nhận `stability` 0/0.5/1.0 + `speed`, không nhận
+similarity/style/speaker_boost — web lọc `voice_settings` theo model, app thì
+chưa; (c) field body `provider` (elevenlabs/minimax/capcut), `export_transcript`
+(+15% credit); (d) `POST /v1/history/{id}/retry` (trừ credit lại),
+`DELETE /v1/history/{id}`, `GET /v1/models?provider=...`.
+
 **Nâng cấp khác:**
-10. Cho chỉnh `CONCURRENCY` qua UI (hiện hard-code 4), mặc định thấp hơn
-    và tự giảm khi bị rate limit.
+10. ~~Cho chỉnh `CONCURRENCY` qua UI~~ (đã có ô "Số luồng", 2026-11-21) —
+    còn lại: lưu xuống đĩa + tự giảm khi bị rate limit.
 11. Cảnh báo/tự tách đoạn quá dài trước khi chạy (giới hạn ký tự chưa rõ
     — mục 2.4).
 12. Cộng dồn `credits_deducted` thật, hiện "đã tiêu X credit" sau job.

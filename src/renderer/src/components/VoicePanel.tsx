@@ -7,6 +7,8 @@ const SEARCH_DEBOUNCE_MS = 350
 // Mục 3.1 + 3.2 CLAUDE.md: chọn Voice/Model/Language + override voice settings.
 export function VoicePanel(): React.JSX.Element {
   const apiKey = useSettingsStore((s) => s.apiKey)
+  const provider = useSettingsStore((s) => s.provider)
+  const isElevenlabs = provider === 'elevenlabs'
   const {
     models,
     voices,
@@ -44,8 +46,19 @@ export function VoicePanel(): React.JSX.Element {
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   useEffect(() => {
-    if (apiKey) loadAll(apiKey)
-  }, [apiKey])
+    if (apiKey) loadAll(provider, apiKey)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [apiKey, provider])
+
+  // Đổi nguồn → xoá ô tìm kiếm đang gõ dở (reset state ngay trong render,
+  // cách React khuyên dùng thay vì useEffect).
+  const [prevProvider, setPrevProvider] = useState(provider)
+  if (provider !== prevProvider) {
+    setPrevProvider(provider)
+    setSearchInput('')
+    setIdInput('')
+    setIdNotFoundWarning(false)
+  }
 
   // Đóng dropdown khi click ra ngoài.
   useEffect(() => {
@@ -68,17 +81,40 @@ export function VoicePanel(): React.JSX.Element {
       return
     }
     debounceRef.current = setTimeout(() => {
-      searchLibrary(apiKey, searchInput.trim())
+      searchLibrary(provider, apiKey, searchInput.trim())
     }, SEARCH_DEBOUNCE_MS)
     return () => {
       if (debounceRef.current) clearTimeout(debounceRef.current)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [searchInput, apiKey])
+  }, [searchInput, apiKey, provider])
 
   const displayedVoices = searchInput.trim() ? searchResults : voices
   const selectedVoice = resolvedVoicesById[selectedVoiceId]
   const ttsModels = models.filter((m) => m.can_do_text_to_speech)
+  // ElevenLabs: chỉ hiện ngôn ngữ model đang chọn hỗ trợ (field `languages`
+  // của model); không có thông tin thì hiện tất cả.
+  const selectedModel = ttsModels.find((m) => m.model_id === selectedModelId)
+  const modelLanguageCodes = isElevenlabs
+    ? new Set((selectedModel?.languages ?? []).map((l) => l.language_id))
+    : null
+  const displayedLanguages =
+    modelLanguageCodes && modelLanguageCodes.size > 0
+      ? languages.filter((l) => modelLanguageCodes.has(l.code))
+      : languages
+
+  // Đổi model ElevenLabs mà model mới không hỗ trợ ngôn ngữ đang chọn → về
+  // "Tự nhận diện" thay vì gửi language_code sai.
+  useEffect(() => {
+    if (
+      isElevenlabs &&
+      selectedLanguageCode &&
+      !displayedLanguages.some((l) => l.code === selectedLanguageCode)
+    ) {
+      setSelectedLanguageCode('')
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isElevenlabs, selectedModelId, languages, selectedLanguageCode])
 
   function pickVoice(id: string): void {
     setSelectedVoiceId(id)
@@ -89,7 +125,7 @@ export function VoicePanel(): React.JSX.Element {
   async function handleUseId(): Promise<void> {
     if (!apiKey || !idInput.trim()) return
     setIdNotFoundWarning(false)
-    const { found } = await resolveVoiceId(apiKey, idInput.trim())
+    const { found } = await resolveVoiceId(provider, apiKey, idInput.trim())
     setIdNotFoundWarning(!found)
     setIdInput('')
   }
@@ -105,7 +141,9 @@ export function VoicePanel(): React.JSX.Element {
           className="relative col-span-2 flex min-w-0 flex-col gap-1.5 text-xs font-medium text-gray-500"
           ref={boxRef}
         >
-          Voice — search theo tên (toàn bộ thư viện GenVoice)
+          {isElevenlabs
+            ? 'Voice — My Voices, hoặc gõ tên để tìm trong Voice Library ElevenLabs'
+            : 'Voice — search theo tên (toàn bộ thư viện GenVoice)'}
           <input
             className="rounded-lg border border-gray-300 px-3 py-1.5 text-sm text-gray-900 outline-none transition-colors focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/15"
             placeholder="Search voice by name..."
@@ -121,7 +159,9 @@ export function VoicePanel(): React.JSX.Element {
             <div className="absolute top-full left-0 z-10 mt-1.5 max-h-72 w-full overflow-y-auto rounded-lg border border-gray-200 bg-white py-1 shadow-lg">
               {!searchInput.trim() && (
                 <div className="border-b border-gray-100 px-3 py-1.5 text-[11px] text-gray-400">
-                  Đang hiện {voices.length} voice mặc định — gõ tên để tìm trong TOÀN BỘ thư viện
+                  {isElevenlabs
+                    ? `Đang hiện ${voices.length} voice trong tài khoản (My Voices) — gõ tên để tìm trong Voice Library`
+                    : `Đang hiện ${voices.length} voice mặc định — gõ tên để tìm trong TOÀN BỘ thư viện`}
                 </div>
               )}
               {searching && displayedVoices.length === 0 && (
@@ -150,7 +190,7 @@ export function VoicePanel(): React.JSX.Element {
                   type="button"
                   className="block w-full border-t border-gray-100 px-3 py-1.5 text-center text-xs font-medium text-indigo-600 hover:bg-indigo-50 disabled:opacity-50"
                   disabled={searching}
-                  onClick={() => apiKey && loadMoreSearchResults(apiKey)}
+                  onClick={() => apiKey && loadMoreSearchResults(provider, apiKey)}
                 >
                   {searching ? 'Đang tải...' : 'Tải thêm kết quả'}
                 </button>
@@ -185,8 +225,9 @@ export function VoicePanel(): React.JSX.Element {
           </div>
           {idNotFoundWarning && (
             <span className="text-[11px] text-amber-600">
-              Không thấy ID này trong shared-voices — vẫn đã chọn, nhưng chưa xác minh được tên/tồn
-              tại thật, kiểm tra kỹ trước khi chạy batch job lớn.
+              {isElevenlabs
+                ? 'Không thấy ID này trong My Voices/Voice Library — vẫn đã chọn, nhưng chưa xác minh được, kiểm tra kỹ trước khi chạy batch job lớn.'
+                : 'Không thấy ID này trong shared-voices — vẫn đã chọn, nhưng chưa xác minh được tên/tồn tại thật, kiểm tra kỹ trước khi chạy batch job lớn.'}
             </span>
           )}
         </div>
@@ -213,7 +254,8 @@ export function VoicePanel(): React.JSX.Element {
             value={selectedLanguageCode}
             onChange={(e) => setSelectedLanguageCode(e.target.value)}
           >
-            {languages.map((l) => (
+            {isElevenlabs && <option value="">Tự nhận diện (không gửi)</option>}
+            {displayedLanguages.map((l) => (
               <option key={l.code} value={l.code}>
                 {l.name}
               </option>

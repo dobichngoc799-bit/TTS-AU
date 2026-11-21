@@ -1,5 +1,11 @@
 import { create } from 'zustand'
-import type { GenvoiceLanguage, GenvoiceModel, GenvoiceVoice, VoiceSettings } from '@shared/types'
+import type {
+  GenvoiceLanguage,
+  GenvoiceModel,
+  GenvoiceVoice,
+  TtsProvider,
+  VoiceSettings
+} from '@shared/types'
 import { DEFAULT_VOICE_SETTINGS } from '@shared/types'
 
 interface VoiceState {
@@ -8,6 +14,9 @@ interface VoiceState {
   voices: GenvoiceVoice[] // GET /v1/default-voices — load ngay khi mở app, danh sách nhỏ cố định
   loading: boolean
   error: string | null
+  // Nguồn của models/voices đang hiển thị — đổi nguồn thì xoá hết lựa chọn
+  // cũ (model/voice/language của GenVoice không chắc dùng được ở ElevenLabs).
+  loadedProvider: TtsProvider | null
 
   // Tìm kiếm trong toàn bộ thư viện GenVoice (GET /v1/shared-voices, CONFIRMED
   // có phân trang thật + hỗ trợ `search` server-side theo cả tên LẪN voice_id
@@ -30,15 +39,19 @@ interface VoiceState {
   voiceSettingsEnabled: boolean
   voiceSettings: VoiceSettings
 
-  loadAll: (apiKey: string) => Promise<void>
-  searchLibrary: (apiKey: string, query: string) => Promise<void>
-  loadMoreSearchResults: (apiKey: string) => Promise<void>
+  loadAll: (provider: TtsProvider, apiKey: string) => Promise<void>
+  searchLibrary: (provider: TtsProvider, apiKey: string, query: string) => Promise<void>
+  loadMoreSearchResults: (provider: TtsProvider, apiKey: string) => Promise<void>
   clearSearch: () => void
   // Tra đúng 1 voice_id user dán vào — gọi khi user biết chính xác ID muốn
   // dùng, không cần chờ gõ tìm theo tên. Nếu server không tìm thấy (voice
   // riêng tư/không thuộc shared-voices), vẫn chọn ID đó luôn để user có thể
   // dùng ngay, kèm cảnh báo chưa xác minh được tên thật.
-  resolveVoiceId: (apiKey: string, voiceId: string) => Promise<{ found: boolean }>
+  resolveVoiceId: (
+    provider: TtsProvider,
+    apiKey: string,
+    voiceId: string
+  ) => Promise<{ found: boolean }>
   setSelectedVoiceId: (id: string, knownVoice?: GenvoiceVoice) => void
   setSelectedModelId: (id: string) => void
   setSelectedLanguageCode: (code: string) => void
@@ -55,6 +68,7 @@ export const useVoiceStore = create<VoiceState>((set, get) => ({
   voices: [],
   loading: false,
   error: null,
+  loadedProvider: null,
 
   searchQuery: '',
   searchResults: [],
@@ -71,33 +85,56 @@ export const useVoiceStore = create<VoiceState>((set, get) => ({
   voiceSettingsEnabled: false,
   voiceSettings: { ...DEFAULT_VOICE_SETTINGS },
 
-  loadAll: async (apiKey: string) => {
-    set({ loading: true, error: null })
+  loadAll: async (provider: TtsProvider, apiKey: string) => {
+    if (get().loadedProvider !== provider) {
+      set({
+        models: [],
+        languages: [],
+        voices: [],
+        searchQuery: '',
+        searchResults: [],
+        searchHasMore: false,
+        searchPage: 0,
+        resolvedVoicesById: {},
+        selectedModelId: '',
+        selectedVoiceId: '',
+        selectedLanguageCode: ''
+      })
+    }
+    set({ loading: true, error: null, loadedProvider: provider })
     try {
       const [models, languages, voices] = await Promise.all([
-        window.api.genvoice.listModels(apiKey),
-        window.api.genvoice.listLanguages(apiKey),
-        window.api.genvoice.listDefaultVoices(apiKey)
+        window.api.tts.listModels(provider, apiKey),
+        window.api.tts.listLanguages(provider, apiKey),
+        window.api.tts.listDefaultVoices(provider, apiKey)
       ])
-      set((state) => ({
-        models,
-        languages,
-        voices,
-        loading: false,
-        resolvedVoicesById: mergeById(state.resolvedVoicesById, voices),
-        selectedModelId: state.selectedModelId || models.find((m) => m.can_do_text_to_speech)?.model_id || '',
-        selectedVoiceId: state.selectedVoiceId || voices[0]?.voice_id || '',
-        selectedLanguageCode: state.selectedLanguageCode || 'en'
-      }))
+      if (get().loadedProvider !== provider) return // user đã đổi nguồn trong lúc tải
+      set((state) => {
+        const ttsModels = models.filter((m) => m.can_do_text_to_speech)
+        const modelStillValid = ttsModels.some((m) => m.model_id === state.selectedModelId)
+        return {
+          models,
+          languages,
+          voices,
+          loading: false,
+          resolvedVoicesById: mergeById(state.resolvedVoicesById, voices),
+          selectedModelId: modelStillValid ? state.selectedModelId : ttsModels[0]?.model_id || '',
+          selectedVoiceId: state.selectedVoiceId || voices[0]?.voice_id || '',
+          // ElevenLabs: mặc định '' = không gửi language_code (nhiều model
+          // báo lỗi nếu gửi). GenVoice bắt buộc có → mặc định 'en'.
+          selectedLanguageCode:
+            state.selectedLanguageCode || (provider === 'genvoice' ? 'en' : '')
+        }
+      })
     } catch (err) {
       set({ error: err instanceof Error ? err.message : String(err), loading: false })
     }
   },
 
-  searchLibrary: async (apiKey: string, query: string) => {
+  searchLibrary: async (provider: TtsProvider, apiKey: string, query: string) => {
     set({ searching: true, searchError: null, searchQuery: query, searchPage: 0 })
     try {
-      const { voices, hasMore } = await window.api.genvoice.listSharedVoices(apiKey, {
+      const { voices, hasMore } = await window.api.tts.listSharedVoices(provider, apiKey, {
         search: query || undefined,
         page: 0,
         pageSize: SEARCH_PAGE_SIZE
@@ -113,13 +150,13 @@ export const useVoiceStore = create<VoiceState>((set, get) => ({
     }
   },
 
-  loadMoreSearchResults: async (apiKey: string) => {
+  loadMoreSearchResults: async (provider: TtsProvider, apiKey: string) => {
     const { searchQuery, searchPage, searching } = get()
     if (searching) return
     set({ searching: true, searchError: null })
     try {
       const nextPage = searchPage + 1
-      const { voices, hasMore } = await window.api.genvoice.listSharedVoices(apiKey, {
+      const { voices, hasMore } = await window.api.tts.listSharedVoices(provider, apiKey, {
         search: searchQuery || undefined,
         page: nextPage,
         pageSize: SEARCH_PAGE_SIZE
@@ -138,7 +175,7 @@ export const useVoiceStore = create<VoiceState>((set, get) => ({
 
   clearSearch: () => set({ searchQuery: '', searchResults: [], searchHasMore: false, searchPage: 0 }),
 
-  resolveVoiceId: async (apiKey: string, voiceId: string) => {
+  resolveVoiceId: async (provider: TtsProvider, apiKey: string, voiceId: string) => {
     const id = voiceId.trim()
     if (!id) return { found: false }
 
@@ -150,7 +187,7 @@ export const useVoiceStore = create<VoiceState>((set, get) => ({
 
     set({ searching: true, searchError: null })
     try {
-      const { voices } = await window.api.genvoice.listSharedVoices(apiKey, {
+      const { voices } = await window.api.tts.listSharedVoices(provider, apiKey, {
         search: id,
         page: 0,
         pageSize: 20

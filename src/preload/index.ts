@@ -1,12 +1,16 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import { electronAPI } from '@electron-toolkit/preload'
 import type {
+  AccountInfo,
   BatchJobConfig,
   BatchProgressEvent,
   BatchStartResult,
+  GenvoiceLanguage,
+  GenvoiceModel,
   GenvoiceVoice,
   ImportedFileGroup,
-  SavedBatchJob
+  SavedBatchJob,
+  TtsProvider
 } from '../shared/types'
 
 export interface ListSharedVoicesParams {
@@ -20,22 +24,34 @@ export interface ListSharedVoicesParams {
 // mọi hành động cụ thể của app đi qua các hàm được liệt kê rõ ràng ở đây.
 const api = {
   settings: {
-    getApiKey: (): Promise<string | null> => ipcRenderer.invoke('settings:getApiKey'),
-    setApiKey: (apiKey: string): Promise<void> => ipcRenderer.invoke('settings:setApiKey', apiKey),
-    clearApiKey: (): Promise<void> => ipcRenderer.invoke('settings:clearApiKey'),
+    getProvider: (): Promise<TtsProvider> => ipcRenderer.invoke('settings:getProvider'),
+    setProvider: (provider: TtsProvider): Promise<void> =>
+      ipcRenderer.invoke('settings:setProvider', provider),
+    getApiKey: (provider: TtsProvider): Promise<string | null> =>
+      ipcRenderer.invoke('settings:getApiKey', provider),
+    setApiKey: (provider: TtsProvider, apiKey: string): Promise<void> =>
+      ipcRenderer.invoke('settings:setApiKey', provider, apiKey),
+    clearApiKey: (provider: TtsProvider): Promise<void> =>
+      ipcRenderer.invoke('settings:clearApiKey', provider),
     getOutputDir: (): Promise<string | null> => ipcRenderer.invoke('settings:getOutputDir'),
     setOutputDir: (dir: string): Promise<void> => ipcRenderer.invoke('settings:setOutputDir', dir)
   },
-  genvoice: {
-    getAccount: (apiKey: string) => ipcRenderer.invoke('genvoice:getAccount', apiKey),
-    listModels: (apiKey: string) => ipcRenderer.invoke('genvoice:listModels', apiKey),
-    listLanguages: (apiKey: string) => ipcRenderer.invoke('genvoice:listLanguages', apiKey),
-    listDefaultVoices: (apiKey: string) => ipcRenderer.invoke('genvoice:listDefaultVoices', apiKey),
+  // Lookup read-only — main process tự chọn GenVoice/ElevenLabs theo provider.
+  tts: {
+    getAccount: (provider: TtsProvider, apiKey: string): Promise<AccountInfo> =>
+      ipcRenderer.invoke('tts:getAccount', provider, apiKey),
+    listModels: (provider: TtsProvider, apiKey: string): Promise<GenvoiceModel[]> =>
+      ipcRenderer.invoke('tts:listModels', provider, apiKey),
+    listLanguages: (provider: TtsProvider, apiKey: string): Promise<GenvoiceLanguage[]> =>
+      ipcRenderer.invoke('tts:listLanguages', provider, apiKey),
+    listDefaultVoices: (provider: TtsProvider, apiKey: string): Promise<GenvoiceVoice[]> =>
+      ipcRenderer.invoke('tts:listDefaultVoices', provider, apiKey),
     listSharedVoices: (
+      provider: TtsProvider,
       apiKey: string,
       params: ListSharedVoicesParams
     ): Promise<{ voices: GenvoiceVoice[]; hasMore: boolean }> =>
-      ipcRenderer.invoke('genvoice:listSharedVoices', apiKey, params)
+      ipcRenderer.invoke('tts:listSharedVoices', provider, apiKey, params)
   },
   dialog: {
     selectOutputDir: (): Promise<string | null> => ipcRenderer.invoke('dialog:selectOutputDir'),
@@ -54,8 +70,7 @@ const api = {
   batchJob: {
     start: (apiKey: string, job: BatchJobConfig): Promise<BatchStartResult> =>
       ipcRenderer.invoke('batchJob:start', apiKey, job),
-    resume: (apiKey: string): Promise<BatchStartResult> =>
-      ipcRenderer.invoke('batchJob:resume', apiKey),
+    resume: (): Promise<BatchStartResult> => ipcRenderer.invoke('batchJob:resume'),
     getSaved: (): Promise<SavedBatchJob | null> => ipcRenderer.invoke('batchJob:getSaved'),
     discardSaved: (): Promise<void> => ipcRenderer.invoke('batchJob:discardSaved'),
     stop: (): Promise<void> => ipcRenderer.invoke('batchJob:stop'),

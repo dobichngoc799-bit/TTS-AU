@@ -8,6 +8,7 @@ export function BatchJobPanel(): React.JSX.Element {
   const [text, setText] = useState('')
   const outputDir = useSettingsStore((s) => s.outputDir)
   const pickOutputDir = useSettingsStore((s) => s.pickOutputDir)
+  const provider = useSettingsStore((s) => s.provider)
   const {
     sourceLines,
     importedGroups,
@@ -16,6 +17,8 @@ export function BatchJobPanel(): React.JSX.Element {
     autoGenerateSrt,
     joinAudio,
     joinGapSeconds,
+    concurrency,
+    setConcurrency,
     setSourceText,
     addImportedGroups,
     clearLines,
@@ -112,6 +115,26 @@ export function BatchJobPanel(): React.JSX.Element {
                 onChange={(e) => setJoinGapSeconds(parseFloat(e.target.value))}
               />
               giây
+            </label>
+            <span className="h-4 w-px bg-gray-200" />
+            <label
+              className="flex items-center gap-2"
+              title={
+                provider === 'elevenlabs'
+                  ? 'Số đoạn tạo cùng lúc. ElevenLabs giới hạn theo gói (Starter ~3, Creator ~5, Pro ~10) — đặt cao hơn gói chỉ làm app phải đợi rate limit.'
+                  : 'Số đoạn tạo cùng lúc. Hay bị rate limit thì giảm xuống.'
+              }
+            >
+              Số luồng
+              <input
+                type="number"
+                min={1}
+                max={20}
+                step={1}
+                className="w-14 rounded-lg border border-gray-300 px-2 py-1 text-sm outline-none transition-colors focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/15"
+                value={concurrency[provider]}
+                onChange={(e) => setConcurrency(provider, parseInt(e.target.value, 10))}
+              />
             </label>
           </div>
 

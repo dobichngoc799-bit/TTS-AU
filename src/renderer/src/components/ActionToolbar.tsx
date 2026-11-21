@@ -2,12 +2,14 @@ import { useMemo, useState } from 'react'
 import { useJobStore } from '../store/jobStore'
 import { useSettingsStore } from '../store/settingsStore'
 import { useVoiceStore } from '../store/voiceStore'
+import { TTS_PROVIDER_LABELS } from '@shared/types'
 
 export function ActionToolbar(): React.JSX.Element {
   const apiKey = useSettingsStore((s) => s.apiKey)
   const outputDir = useSettingsStore((s) => s.outputDir)
   const account = useSettingsStore((s) => s.account)
   const refreshAccount = useSettingsStore((s) => s.refreshAccount)
+  const provider = useSettingsStore((s) => s.provider)
   const { selectedVoiceId, selectedModelId, selectedLanguageCode, voiceSettingsEnabled, voiceSettings } =
     useVoiceStore()
   const {
@@ -17,6 +19,7 @@ export function ActionToolbar(): React.JSX.Element {
     autoGenerateSrt,
     joinAudio,
     joinGapSeconds,
+    concurrency,
     sourceLines,
     importedGroups,
     savedJob,
@@ -32,7 +35,14 @@ export function ActionToolbar(): React.JSX.Element {
   const resumeCredits = savedUnfinished
     .filter((i) => !i.taskId)
     .reduce((sum, i) => sum + i.sourceText.length, 0)
-  const resumeInsufficient = account != null && resumeCredits > account.credit_balance
+  // Job cũ chạy bằng nguồn nào thì Chạy tiếp bằng đúng nguồn đó (main process
+  // tự lấy key đã lưu của nguồn đó). Chỉ so số dư khi đang xem đúng nguồn.
+  const savedProvider = savedJob?.config.provider ?? 'genvoice'
+  const resumeInsufficient =
+    savedProvider === provider &&
+    account?.remaining != null &&
+    resumeCredits > account.remaining
+  const unit = account?.unit ?? (provider === 'elevenlabs' ? 'ký tự' : 'credit')
 
   const totalLineCount = sourceLines.length + importedGroups.reduce((sum, g) => sum + g.lines.length, 0)
 
@@ -48,7 +58,10 @@ export function ActionToolbar(): React.JSX.Element {
     )
     return manualChars + importedChars
   }, [sourceLines, importedGroups])
-  const insufficientCredits = account != null && estimatedCredits > account.credit_balance
+  // ElevenLabs: 1 ký tự ≈ 1 đơn vị quota (một số model Flash/Turbo tính rẻ
+  // hơn) nên ước tính này là mức tối đa. remaining null = không đọc được số
+  // dư → không chặn.
+  const insufficientCredits = account?.remaining != null && estimatedCredits > account.remaining
 
   // "Thư mục output" chỉ bắt buộc khi có văn bản gõ tay (importedGroups tự có
   // outputDir riêng cạnh file gốc, không cần chọn).
@@ -78,10 +91,9 @@ export function ActionToolbar(): React.JSX.Element {
   }
 
   async function handleResume(): Promise<void> {
-    if (!apiKey) return
     setError(null)
     try {
-      await resume(apiKey)
+      await resume()
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
     } finally {
@@ -118,6 +130,8 @@ export function ActionToolbar(): React.JSX.Element {
     setError(null)
     try {
       await start(apiKey, {
+        provider,
+        concurrency: concurrency[provider],
         voiceId: selectedVoiceId,
         modelId: selectedModelId,
         languageCode: selectedLanguageCode,
@@ -167,18 +181,23 @@ export function ActionToolbar(): React.JSX.Element {
             insufficientCredits ? 'bg-red-50 text-red-600' : 'bg-gray-100 text-gray-600'
           }`}
         >
-          Ước tính: ~{estimatedCredits.toLocaleString('vi-VN')} credit
-          {account && ` (còn ${account.credit_balance.toLocaleString('vi-VN')})`}
-          {insufficientCredits && ' — KHÔNG ĐỦ CREDIT, không thể Start'}
+          Ước tính: ~{estimatedCredits.toLocaleString('vi-VN')} {unit}
+          {account?.remaining != null && ` (còn ${account.remaining.toLocaleString('vi-VN')})`}
+          {insufficientCredits && ` — KHÔNG ĐỦ ${unit.toUpperCase()}, không thể Start`}
         </span>
       )}
       {savedJob && !running && (
         <span className="flex items-center gap-2 rounded-lg bg-amber-50 px-2.5 py-1 text-xs text-amber-700">
-          Job trước còn {savedUnfinished.length}/{savedJob.items.length} đoạn chưa xong
+          Job trước ({TTS_PROVIDER_LABELS[savedProvider]}) còn {savedUnfinished.length}/
+          {savedJob.items.length} đoạn chưa xong
           <button
             className="rounded-md bg-amber-500 px-2.5 py-1 font-semibold text-white transition-colors hover:bg-amber-600 disabled:cursor-not-allowed disabled:bg-gray-300"
-            disabled={!apiKey || resumeInsufficient}
-            title={`Dùng lại giọng/settings của job đó. Tốn thêm ~${resumeCredits.toLocaleString('vi-VN')} credit (đoạn "Chưa tải xong" không tốn thêm).`}
+            disabled={resumeInsufficient}
+            title={
+              savedProvider === 'elevenlabs'
+                ? `Dùng lại giọng/settings và API key ElevenLabs của job đó. Tốn thêm ~${resumeCredits.toLocaleString('vi-VN')} ký tự.`
+                : `Dùng lại giọng/settings và API key GenVoice của job đó. Tốn thêm ~${resumeCredits.toLocaleString('vi-VN')} credit (đoạn "Chưa tải xong" không tốn thêm).`
+            }
             onClick={handleResume}
           >
             ↻ Chạy tiếp
@@ -186,7 +205,7 @@ export function ActionToolbar(): React.JSX.Element {
           <button className="text-amber-700 underline hover:text-amber-900" onClick={handleDiscard}>
             Bỏ
           </button>
-          {resumeInsufficient && <span className="font-medium text-red-600">Không đủ credit</span>}
+          {resumeInsufficient && <span className="font-medium text-red-600">Không đủ {unit}</span>}
         </span>
       )}
       {incompleteGroups.length > 0 && !running && (
