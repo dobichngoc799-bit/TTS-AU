@@ -24,11 +24,25 @@ hiện tại) — xem mục 5 về khác biệt môi trường giữa 2 máy.
 **Trạng thái tổng quan (2026-11-21):** bản mới nhất **v0.1.3** — thêm nguồn
 **ElevenLabs gốc** (dùng API key ElevenLabs riêng, chọn nguồn ở thanh trên
 cùng, xem mục 2.5) + ô "Số luồng". User đã test bằng key ElevenLabs thật qua
-`npm run dev` và xác nhận chạy ổn trước khi phát hành. v0.1.2 (lưu tiến độ
-job + Chạy tiếp, xem mục 10) đã phát hành lên GitHub Releases. v0.1.1 đã
-được user xác nhận chạy ổn (bản cài đặt thật, không chỉ `npm run dev`).
-`GH_TOKEN` đã đặt sẵn làm biến môi trường cấp User trên máy Windows —
-`npm run release` chạy được trực tiếp, không bao giờ in/ghi token. App hoạt động end-to-end với credit thật trên
+`npm run dev` và xác nhận chạy ổn trước khi phát hành. **v0.1.3 đã phát
+hành 2026-11-21** (commit `b863846`), đã verify trên GitHub: release public
+(không draft), đủ `.exe` + `.blockmap` + `latest.yml`, `latest.yml` tải qua
+link public khớp sha512 với file build local. Chưa có xác nhận auto-update
+0.1.2 → 0.1.3 trên máy user. v0.1.2 (lưu tiến độ job + Chạy tiếp, xem mục 10)
+đã phát hành lên GitHub Releases. v0.1.1 đã được user xác nhận chạy ổn (bản
+cài đặt thật, không chỉ `npm run dev`).
+`GH_TOKEN` đặt làm biến môi trường cấp User trên máy Windows —
+`npm run release` chạy được trực tiếp, không bao giờ in/ghi token. **Token
+cũ đã hết hạn** (2026-11-21, release báo `401 Bad credentials` ngay ở
+`create-github-release.mjs`, chưa tạo gì trên GitHub) → đã thay token mới.
+Token mới đó bị user dán vào chat nên đã khuyên user revoke + tạo lại bằng
+cách nhập ẩn (`Read-Host -AsSecureString` → `SetEnvironmentVariable(...,
+"User")`) — nếu release lại báo 401 thì nhiều khả năng token đã bị revoke,
+nhờ user tạo token mới (fine-grained, chỉ repo TTS-AU, Contents: Read and
+write). `git push` KHÔNG dùng `GH_TOKEN` mà dùng Git Credential Manager của
+Windows (tài khoản `dobichngoc799-bit`) — push được không có nghĩa token còn
+hạn. Máy này chưa cấu hình `git config user.name/email`: commit bằng
+`git -c user.name=... -c user.email=...`, không sửa config global. App hoạt động end-to-end với credit thật trên
 Windows: generate audio, Auto Split, Join Mp3 (có khoảng lặng), import file
 tự tạo folder riêng, chạy song song 4 luồng, tự đợi khi bị rate limit, tự
 cập nhật qua `electron-updater`. Xem mục 10 cho danh sách việc còn lại.
@@ -267,7 +281,12 @@ Import text (file/folder/srt) hoặc gõ tay
   (2026-09-24): user cài v0.1.0, app tự cập nhật lên v0.1.1 thành công. Nếu có batch job đang
   chạy khi tải xong update thì không restart (tự cài khi tắt app). Các bản
   build TRƯỚC 2026-09-23 trỏ URL placeholder nên không tự update được —
-  phải cài tay 1 lần bản mới.
+  phải cài tay 1 lần bản mới. **v0.1.2 / v0.1.3** phát hành cùng cách
+  (`npm version <x> --no-git-tag-version` → commit + push → `npm run release`
+  từ PowerShell; trong tool Claude Code phải tự thêm Node portable vào PATH,
+  đọc `GH_TOKEN` từ biến User bằng
+  `[Environment]::GetEnvironmentVariable("GH_TOKEN","User")` và xoá
+  `ELECTRON_RUN_AS_NODE` trước khi chạy). Build ~208 MB `.exe`.
 
 ## 5. Kiến trúc & cấu trúc thư mục (khớp code thật trong repo)
 
